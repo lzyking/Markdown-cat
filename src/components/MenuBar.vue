@@ -21,11 +21,12 @@ function openSettings() {
 </template>
 
 <style scoped>
+/* 菜单栏：标题栏下方，固定高度 28px */
 .menu-bar {
   display: flex;
   align-items: center;
-  height: 28px;
-  padding: 0 8px;
+  height: var(--size-menu-bar-height);
+  padding: 0 var(--spacing-sm);
   background: var(--color-background);
   border-bottom: 1px solid var(--color-border-subtle);
   user-select: none;
@@ -33,9 +34,9 @@ function openSettings() {
 
 .menu-item {
   position: relative;
-  padding: 4px 8px;
-  border-radius: 4px;
-  font-size: 14px;
+  padding: var(--spacing-xs) var(--spacing-sm);
+  border-radius: var(--rounded-sm);
+  font-size: var(--font-size-body);
   color: var(--color-text-primary);
   cursor: pointer;
 }
@@ -56,11 +57,11 @@ function openSettings() {
   left: 0;
   z-index: 100;
   min-width: 180px;
-  padding: 4px;
+  padding: var(--spacing-xs);
   background: var(--color-background-elevated);
   border: 1px solid var(--color-border);
-  border-radius: 6px;
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
+  border-radius: var(--rounded-md);
+  box-shadow: var(--shadow-dialog);
 }
 
 .menu-item:focus .menu-dropdown,
@@ -69,9 +70,9 @@ function openSettings() {
 }
 
 .menu-row {
-  padding: 6px 8px;
-  border-radius: 4px;
-  font-size: 14px;
+  padding: 6px var(--spacing-sm);
+  border-radius: var(--rounded-sm);
+  font-size: var(--font-size-body);
   color: var(--color-text-primary);
 }
 

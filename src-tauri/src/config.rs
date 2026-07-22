@@ -1,0 +1,120 @@
+use serde::{Deserialize, Serialize};
+use std::fs;
+use std::path::{Path, PathBuf};
+use tauri::Manager;
+
+/// 错误码常量，用于统一返回结构中的 error 字段，避免硬编码自然语言。
+pub const ERR_APP_DIR_NOT_WRITABLE: &str = "ERR_APP_DIR_NOT_WRITABLE";
+pub const ERR_CONFIG_WRITE_FAILED: &str = "ERR_CONFIG_WRITE_FAILED";
+pub const ERR_CONFIG_READ_FAILED: &str = "ERR_CONFIG_READ_FAILED";
+
+const CONFIG_FILE_NAME: &str = "config.json";
+const FALLBACK_DIR_NAME: &str = "MarkdownCat";
+
+/// 应用配置结构。
+/// 新增未知字段默认忽略，以保证向后兼容。
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(default)]
+pub struct AppConfig {
+    /// 默认保存路径，null 表示使用系统默认规则。
+    #[serde(rename = "savePath")]
+    pub save_path: Option<String>,
+}
+
+impl Default for AppConfig {
+    fn default() -> Self {
+        Self { save_path: None }
+    }
+}
+
+impl AppConfig {
+    /// 使用指定保存路径构造配置。
+    pub fn with_save_path(save_path: String) -> Self {
+        Self {
+            save_path: Some(save_path),
+        }
+    }
+}
+
+/// 解析并返回应用可写目录。
+///
+/// 优先使用 Tauri 提供的 app_data_dir（对应 macOS 下的 ~/Library/Application Support/<identifier>）；
+/// 若该目录不可写，则回退到用户文档目录下的 MarkdownCat 子目录；
+/// 若两者均不可用，返回错误码 ERR_APP_DIR_NOT_WRITABLE。
+pub fn resolve_writable_dir(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let app_data_dir = app_handle
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("{}: {}", ERR_APP_DIR_NOT_WRITABLE, e))?;
+
+    if is_dir_writable(&app_data_dir) {
+        return Ok(app_data_dir);
+    }
+
+    // 回退到 ~/Documents/MarkdownCat
+    let documents_dir = app_handle
+        .path()
+        .document_dir()
+        .map_err(|e| format!("{}: {}", ERR_APP_DIR_NOT_WRITABLE, e))?;
+    let fallback_dir = documents_dir.join(FALLBACK_DIR_NAME);
+
+    if is_dir_writable(&fallback_dir) {
+        return Ok(fallback_dir);
+    }
+
+    Err(ERR_APP_DIR_NOT_WRITABLE.to_string())
+}
+
+/// 检测目录是否可写：不存在则尝试创建，然后尝试写入临时文件验证。
+fn is_dir_writable(dir: &Path) -> bool {
+    if fs::create_dir_all(dir).is_err() {
+        return false;
+    }
+
+    let test_file = dir.join(".write_test");
+    match fs::write(&test_file, b"") {
+        Ok(_) => {
+            let _ = fs::remove_file(&test_file);
+            true
+        }
+        Err(_) => false,
+    }
+}
+
+/// 读取配置文件。
+///
+/// 文件不存在时返回默认配置；
+/// 文件存在但解析失败时记录警告并返回默认配置，不阻断应用启动；
+/// 其他读取错误返回错误码。
+pub fn read_config(config_path: &Path) -> Result<AppConfig, String> {
+    match fs::read_to_string(config_path) {
+        Ok(content) => match serde_json::from_str::<AppConfig>(&content) {
+            Ok(config) => Ok(config),
+            Err(e) => {
+                eprintln!("配置解析失败，使用默认配置: {}", e);
+                Ok(AppConfig::default())
+            }
+        },
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(AppConfig::default()),
+        Err(e) => Err(format!("{}: {}", ERR_CONFIG_READ_FAILED, e)),
+    }
+}
+
+/// 将配置以 JSON 格式写入指定路径。
+pub fn write_config(config_path: &Path, config: &AppConfig) -> Result<(), String> {
+    if let Some(parent) = config_path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("{}: {}", ERR_CONFIG_WRITE_FAILED, e))?;
+    }
+
+    let content = serde_json::to_string_pretty(config)
+        .map_err(|e| format!("{}: {}", ERR_CONFIG_WRITE_FAILED, e))?;
+
+    fs::write(config_path, content)
+        .map_err(|e| format!("{}: {}", ERR_CONFIG_WRITE_FAILED, e))
+}
+
+/// 返回配置文件的完整路径。
+pub fn config_file_path(writable_dir: &Path) -> PathBuf {
+    writable_dir.join(CONFIG_FILE_NAME)
+}

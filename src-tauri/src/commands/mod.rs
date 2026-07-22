@@ -17,7 +17,6 @@ impl<T> CmdResult<T> {
         }
     }
 
-    #[allow(dead_code)]
     pub fn failure<E: ToString>(err: E) -> Self {
         Self {
             ok: false,
@@ -26,6 +25,8 @@ impl<T> CmdResult<T> {
         }
     }
 }
+
+pub mod config;
 
 /// 后端命令注册入口。
 #[tauri::command]

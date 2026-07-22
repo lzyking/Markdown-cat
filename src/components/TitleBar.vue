@@ -27,12 +27,13 @@ defineProps<{
 </template>
 
 <style scoped>
+/* 标题栏：窗口顶部，支持拖拽，固定高度 38px */
 .title-bar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 38px;
-  padding: 0 16px;
+  height: var(--size-title-bar-height);
+  padding: 0 var(--spacing-lg);
   background: var(--color-background-surface);
   border-bottom: 1px solid var(--color-border);
   -webkit-app-region: drag;
@@ -43,7 +44,7 @@ defineProps<{
 .right {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--spacing-sm);
 }
 
 .app-icon {
@@ -52,22 +53,22 @@ defineProps<{
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 4px;
+  border-radius: var(--rounded-sm);
   background: var(--color-accent);
   color: var(--color-accent-foreground);
-  font-size: 10px;
-  font-weight: 600;
+  font-size: var(--font-size-icon);
+  font-weight: var(--font-weight-semibold);
 }
 
 .filename {
-  font-size: 14px;
+  font-size: var(--font-size-body);
   color: var(--color-text-primary);
 }
 
 .status-dot {
   width: 8px;
   height: 8px;
-  border-radius: 50%;
+  border-radius: var(--rounded-full);
 }
 
 .status-dot.success {

@@ -3,14 +3,17 @@
     "identifier": "filesystem",
     "description": "Capability for file system access and folder picker. Scope limited to app data directory and user selected save directory (defined in Story 4.x).",
     "windows": ["main"],
-    "permissions": [
-      {
-        "identifier": "fs:scope",
-        "allow": [
-          "$APPDATA/**/*",
-          "$APPDATALOCAL/**/*"
-        ]
-      },
+  "permissions": [
+    {
+      "identifier": "fs:scope",
+      "allow": [
+        "$APPDATA/**/*",
+        "$APPDATALOCAL/**/*",
+        "$DESKTOP/**/*",
+        "$DOCUMENT/**/*",
+        "$DOWNLOAD/**/*"
+      ]
+    },
       "fs:allow-read-dir",
       "fs:allow-read-file",
       "fs:allow-write-file",

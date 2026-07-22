@@ -1,11 +1,18 @@
 mod commands;
+mod config;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![commands::ping, commands::init_app])
+        .invoke_handler(tauri::generate_handler![
+            commands::ping,
+            commands::init_app,
+            commands::config::get_app_dir,
+            commands::config::get_config,
+            commands::config::set_config
+        ])
         .setup(|_app| {
             #[cfg(debug_assertions)]
             {

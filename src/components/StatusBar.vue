@@ -20,15 +20,16 @@ defineProps<{
 </template>
 
 <style scoped>
+/* 状态栏：窗口底部，固定高度 24px */
 .status-bar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 24px;
-  padding: 0 12px;
+  height: var(--size-status-bar-height);
+  padding: 0 var(--spacing-md);
   background: var(--color-background-elevated);
   border-top: 1px solid var(--color-border-subtle);
-  font-size: 12px;
+  font-size: var(--font-size-status);
   color: var(--color-text-muted);
   user-select: none;
 }
@@ -37,7 +38,7 @@ defineProps<{
 .right {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--spacing-md);
 }
 
 .left.success {

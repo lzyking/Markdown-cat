@@ -1,23 +1,34 @@
 :root {
-  /* Colors */
+  /* ================================
+     颜色 token（Colors）
+     设计来源：DESIGN.md
+     ================================ */
   --color-background: #0D1117;
   --color-background-surface: #161B22;
   --color-background-elevated: #1C2128;
+
   --color-border: #30363D;
   --color-border-subtle: #21262D;
+
   --color-text-primary: #E6EDF3;
   --color-text-secondary: #8B949E;
   --color-text-muted: #6E7681;
   --color-text-disabled: #484F58;
+
   --color-accent: #7DD3FC;
   --color-accent-foreground: #0D1117;
+
   --color-success: #3FB950;
   --color-error: #F85149;
   --color-warning: #D29922;
+
   --color-code-background: #1C2128;
   --color-selection: #264F78;
 
-  /* Typography */
+  /* ================================
+     字体 token（Typography）
+     统一使用系统字体栈，避免外部字体加载
+     ================================ */
   --font-display: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
   --font-heading: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
   --font-body: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
@@ -25,7 +36,26 @@
   --font-label: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
   --font-status: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
 
-  /* Spacing */
+  /* 字号与字重 token（Typography Scale） */
+  --font-size-display: 22px;
+  --font-size-heading: 18px;
+  --font-size-body: 14px;
+  --font-size-label: 12px;
+  --font-size-status: 12px;
+  --font-size-icon: 10px;
+
+  --font-weight-regular: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+
+  --line-height-tight: 1.3;
+  --line-height-normal: 1.4;
+  --line-height-relaxed: 1.6;
+
+  /* ================================
+     间距 token（Spacing）
+     以 4px 为基准网格
+     ================================ */
   --spacing-xs: 4px;
   --spacing-sm: 8px;
   --spacing-md: 12px;
@@ -33,12 +63,30 @@
   --spacing-xl: 20px;
   --spacing-xxl: 24px;
 
-  /* Rounded */
+  /* ================================
+     圆角 token（Rounded）
+     ================================ */
   --rounded-sm: 4px;
   --rounded-md: 6px;
   --rounded-lg: 8px;
+  --rounded-full: 50%;
+
+  /* ================================
+     层级与阴影（Elevation）
+     浮层/对话框使用柔和阴影，其他界面元素无阴影
+     ================================ */
+  --shadow-dialog: 0 12px 40px rgba(0, 0, 0, 0.4);
+
+  /* ================================
+     布局尺寸（Layout Sizes）
+     由 UX 规范确定的固定区域高度，视为布局契约
+     ================================ */
+  --size-title-bar-height: 38px;
+  --size-menu-bar-height: 28px;
+  --size-status-bar-height: 24px;
 }
 
+/* 全局盒模型重置 */
 * {
   box-sizing: border-box;
 }
@@ -52,8 +100,8 @@ body,
   height: 100%;
   overflow: hidden;
   font-family: var(--font-body);
-  font-size: 14px;
-  line-height: 1.6;
+  font-size: var(--font-size-body);
+  line-height: var(--line-height-relaxed);
   color: var(--color-text-primary);
   background: var(--color-background);
 }
@@ -63,7 +111,7 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* System fonts for code */
+/* 源码编辑器、代码块、键盘等使用等宽字体 */
 code,
 pre,
 kbd,
@@ -71,16 +119,16 @@ samp {
   font-family: var(--font-body-mono);
 }
 
-/* Minimal focus styles */
+/* 焦点环样式 */
 :focus-visible {
   outline: 1px solid var(--color-accent);
   outline-offset: 1px;
 }
 
-/* Scrollbars */
+/* 滚动条：使用设计 token 颜色 */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: var(--spacing-sm);
+  height: var(--spacing-sm);
 }
 
 ::-webkit-scrollbar-track {
@@ -89,7 +137,7 @@ samp {
 
 ::-webkit-scrollbar-thumb {
   background: var(--color-border);
-  border-radius: 4px;
+  border-radius: var(--rounded-sm);
 }
 
 ::-webkit-scrollbar-thumb:hover {

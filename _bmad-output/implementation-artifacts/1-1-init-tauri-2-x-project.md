@@ -1,11 +1,11 @@
 ---
 baseline_commit: 88573c6255a619508358da38001f45a37c28cfe2
-status: in-progress
+status: done
 ---
 
 # Story 1.1: 初始化 Tauri 2.x 项目与绿色应用壳
 
-Status: review
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -36,22 +36,22 @@ So that 在没有管理员权限的受控 Mac 上也能使用。
 
 ## Tasks / Subtasks
 
-- [ ] 创建 Tauri 2.x 项目骨架（前端 + 后端）
-  - [ ] 初始化 `src/` 前端目录与 `src-tauri/` 后端目录
-  - [ ] 配置 `Cargo.toml`（Rust 1.80+、Tauri 2.x、所需插件）
-  - [ ] 配置 `package.json`（Node LTS、Tauri CLI、前端构建脚本）
-- [ ] 配置最小权限集
-  - [ ] 在 `tauri.conf.json` 中启用并限制 `fs` 权限
-  - [ ] 在 `tauri.conf.json` 中启用并限制 `dialog` 权限
-  - [ ] 记录权限清单与限制理由
-- [ ] 实现最小可运行应用壳
-  - [ ] 前端入口文件加载成功
-  - [ ] 主窗口按 UX 规格渲染（默认 1100×700px，最小 800×500px）
-  - [ ] 标题栏/菜单栏/编辑区/状态栏占位结构正确
-- [ ] 验证绿色运行
-  - [ ] 在开发模式下编译运行通过
-  - [ ] 确认应用包不向系统注册表或 `/Applications` 写入
-  - [ ] 记录 Gatekeeper 绕过测试结果
+- [x] 创建 Tauri 2.x 项目骨架（前端 + 后端）
+  - [x] 初始化 `src/` 前端目录与 `src-tauri/` 后端目录
+  - [x] 配置 `Cargo.toml`（Rust 1.80+、Tauri 2.x、所需插件）
+  - [x] 配置 `package.json`（Node LTS、Tauri CLI、前端构建脚本）
+- [x] 配置最小权限集
+  - [x] 在 `tauri.conf.json` 中启用并限制 `fs` 权限
+  - [x] 在 `tauri.conf.json` 中启用并限制 `dialog` 权限
+  - [x] 记录权限清单与限制理由
+- [x] 实现最小可运行应用壳
+  - [x] 前端入口文件加载成功
+  - [x] 主窗口按 UX 规格渲染（默认 1100×700px，最小 800×500px）
+  - [x] 标题栏/菜单栏/编辑区/状态栏占位结构正确
+- [x] 验证绿色运行
+  - [x] 在开发模式下编译运行通过
+  - [x] 确认应用包不向系统注册表或 `/Applications` 写入
+  - [x] 记录 Gatekeeper 绕过测试结果
 
 ## Dev Notes
 
@@ -153,3 +153,12 @@ kimi-for-coding
 - [Architecture Spine](_bmad-output/planning-artifacts/architecture/architecture-Markdown%20Cat-2026-07-21/ARCHITECTURE-SPINE.md) — AD-1、AD-5、Stack、Structural Seed
 - [DESIGN.md](_bmad-output/planning-artifacts/ux-designs/ux-Markdown%20Cat-2026-07-21/DESIGN.md) — 布局、组件、颜色与字体 token
 - [EXPERIENCE.md](_bmad-output/planning-artifacts/ux-designs/ux-Markdown%20Cat-2026-07-21/EXPERIENCE.md) — 信息架构、关键流程、禁止行为
+
+### Review Findings
+
+- [x] [Review][Patch] CSP 被显式禁用为 null，存在安全风险 — `src-tauri/tauri.conf.json:82`
+- [x] [Review][Patch] fs:scope 当前仅允许应用目录，缺少用户选择的保存目录 — `src-tauri/capabilities/filesystem.json:136-139`
+- [ ] [Review][Deferred] index.html 引用不存在的 /vite.svg，会导致 404 — `index.html:290`
+- [ ] [Review][Deferred] ping 命令使用 async 但无 await，可改为同步函数 — `src-tauri/src/commands/mod.rs:208`
+- [ ] [Review][Deferred] thiserror 依赖已引入但当前未使用 — `src-tauri/Cargo.toml:46`
+- [ ] [Review][Deferred] Cargo.toml 中 authors 字段已弃用 — `src-tauri/Cargo.toml:23`
