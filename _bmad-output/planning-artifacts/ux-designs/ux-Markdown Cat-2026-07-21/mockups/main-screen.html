@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Markdown Cat — Mockup</title>
+  <style>
+    :root {
+      --bg-base: #0d1117;
+      --bg-surface: #161b22;
+      --bg-elevated: #1c2128;
+      --border: #30363d;
+      --border-subtle: #21262d;
+      --text-primary: #e6edf3;
+      --text-secondary: #8b949e;
+      --text-muted: #6e7681;
+      --accent: #7dd3fc;
+      --accent-foreground: #0d1117;
+      --success: #3fb950;
+      --error: #f85149;
+      --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+      --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; }
+    body {
+      font-family: var(--font-sans);
+      background: var(--bg-base);
+      color: var(--text-primary);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    /* Title Bar */
+    .titlebar {
+      height: 38px;
+      background: var(--bg-surface);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 14px;
+      -webkit-app-region: drag;
+      user-select: none;
+    }
+    .titlebar-left { display: flex; align-items: center; gap: 8px; }
+    .titlebar-icon {
+      width: 16px; height: 16px; border-radius: 4px;
+      background: var(--accent); display: grid; place-items: center;
+      color: var(--accent-foreground); font-size: 10px; font-weight: 700;
+    }
+    .titlebar-filename {
+      font-size: 13px; font-weight: 500; color: var(--text-primary);
+    }
+    .titlebar-status {
+      font-size: 12px; color: var(--text-muted); display: flex; align-items: center; gap: 6px;
+    }
+    .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--success); }
+
+    /* Menu Bar */
+    .menubar {
+      height: 28px;
+      background: var(--bg-base);
+      border-bottom: 1px solid var(--border-subtle);
+      display: flex; align-items: center; gap: 4px;
+      padding: 0 12px; font-size: 13px;
+    }
+    .menubar button {
+      background: transparent; border: none; color: var(--text-primary);
+      padding: 2px 8px; border-radius: 4px; cursor: pointer;
+    }
+    .menubar button:hover { background: var(--bg-elevated); }
+
+    /* Main */
+    .main { flex: 1; display: flex; overflow: hidden; }
+    .pane {
+      flex: 1; overflow: auto; padding: 20px 24px;
+      font-size: 14px; line-height: 1.6;
+    }
+    .pane + .pane { border-left: 1px solid var(--border); }
+    .pane-source { background: var(--bg-base); }
+    .pane-source textarea {
+      width: 100%; height: 100%; resize: none; border: none; outline: none;
+      background: transparent; color: var(--text-primary); font-family: var(--font-mono);
+      font-size: 14px; line-height: 1.6; padding: 0;
+    }
+    .pane-preview { background: var(--bg-surface); color: var(--text-primary); }
+    .pane-preview h1 { font-size: 24px; border-bottom: 1px solid var(--border); padding-bottom: 8px; margin-top: 0; }
+    .pane-preview h2 { font-size: 20px; margin-top: 24px; }
+    .pane-preview code {
+      background: var(--bg-elevated); padding: 2px 5px; border-radius: 4px;
+      font-family: var(--font-mono); font-size: 13px;
+    }
+    .pane-preview pre {
+      background: var(--bg-elevated); padding: 12px; border-radius: 6px; overflow: auto;
+    }
+    .pane-preview pre code { background: transparent; padding: 0; }
+    .pane-preview blockquote {
+      border-left: 3px solid var(--accent); margin: 0; padding-left: 14px; color: var(--text-secondary);
+    }
+    .pane-preview ul { padding-left: 22px; }
+    .pane-preview a { color: var(--accent); text-decoration: none; }
+
+    /* Status Bar */
+    .statusbar {
+      height: 24px; background: var(--bg-elevated); border-top: 1px solid var(--border-subtle);
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0 14px; font-size: 12px; color: var(--text-muted);
+    }
+    .statusbar-left, .statusbar-right { display: flex; align-items: center; gap: 12px; }
+    .statusbar .ok { color: var(--success); }
+    .statusbar .error { color: var(--error); }
+
+    /* Save-path dialog overlay */
+    .dialog-overlay {
+      position: fixed; inset: 0; background: rgba(0,0,0,0.5);
+      display: none; align-items: center; justify-content: center; z-index: 100;
+    }
+    .dialog {
+      width: 420px; background: var(--bg-surface); border: 1px solid var(--border);
+      border-radius: 8px; padding: 18px; box-shadow: 0 12px 40px rgba(0,0,0,0.4);
+    }
+    .dialog h3 { margin: 0 0 12px; font-size: 15px; }
+    .dialog p { margin: 0 0 16px; font-size: 13px; color: var(--text-secondary); line-height: 1.5; }
+    .dialog-row { display: flex; gap: 8px; }
+    .dialog input {
+      flex: 1; background: var(--bg-base); border: 1px solid var(--border);
+      border-radius: 6px; color: var(--text-primary); padding: 7px 10px; font-size: 13px;
+    }
+    .dialog button {
+      background: var(--accent); color: var(--accent-foreground); border: none;
+      border-radius: 6px; padding: 7px 14px; font-size: 13px; font-weight: 600; cursor: pointer;
+    }
+    .dialog button.secondary { background: var(--bg-elevated); color: var(--text-primary); border: 1px solid var(--border); }
+    .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+  </style>
+</head>
+<body>
+  <div class="titlebar">
+    <div class="titlebar-left">
+      <div class="titlebar-icon">M</div>
+      <span class="titlebar-filename">New_20260721_143052.md</span>
+    </div>
+    <div class="titlebar-status">
+      <span class="dot"></span> 已保存
+    </div>
+  </div>
+
+  <div class="menubar">
+    <button>Markdown Cat</button>
+    <button>文件</button>
+    <button>编辑</button>
+    <button>视图</button>
+    <button>帮助</button>
+  </div>
+
+  <div class="main">
+    <div class="pane pane-source">
+<textarea spellcheck="false"># 周会待办
+
+- 完成 API 文档更新
+- 与后端确认接口字段
+- 整理本周周报素材
+
+## 参考链接
+
+> 注意：下周需要提前一天发出会议邀请。
+
+代码示例：
+
+```python
+def hello():
+    print("Hello Markdown Cat")
+```</textarea>
+    </div>
+    <div class="pane pane-preview">
+      <h1>周会待办</h1>
+      <ul>
+        <li>完成 API 文档更新</li>
+        <li>与后端确认接口字段</li>
+        <li>整理本周周报素材</li>
+      </ul>
+      <h2>参考链接</h2>
+      <blockquote>注意：下周需要提前一天发出会议邀请。</blockquote>
+      <p>代码示例：</p>
+      <pre><code>def hello():
+    print("Hello Markdown Cat")</code></pre>
+    </div>
+  </div>
+
+  <div class="statusbar">
+    <div class="statusbar-left">
+      <span class="ok">已保存至 New_20260721_143052.md</span>
+    </div>
+    <div class="statusbar-right">
+      <span>行 8, 列 12</span>
+      <span>Markdown</span>
+    </div>
+  </div>
+
+  <!-- Save-path dialog (hidden by default) -->
+  <div class="dialog-overlay" id="dialog" style="display:flex">
+    <div class="dialog">
+      <h3>设置保存路径</h3>
+      <p>选择 Markdown 文件的默认保存目录。后续新建文档将保存到该目录。</p>
+      <div class="dialog-row">
+        <input value="~/Documents/MarkdownCat" readonly>
+        <button>选择…</button>
+      </div>
+      <div class="dialog-actions">
+        <button class="secondary">取消</button>
+        <button>确认</button>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

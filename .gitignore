@@ -1,0 +1,69 @@
+# ==========================================
+# 1. BMAD Method & Agent 配置 (团队协作)
+# ==========================================
+# 忽略 Agent 本地运行产生的临时报告与日志
+._bmad-output/
+
+# 忽略特定 IDE / 本地 Agent 运行时缓存
+.agents/
+.trae/
+
+# 注意：不要忽略 ._bmad/ 目录，保证跨平台团队共享 BMAD 工作流规范
+
+# ==========================================
+# 2. Node.js & 前端构建产出
+# ==========================================
+node_modules/
+dist/
+dist-ssr/
+*.local
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ==========================================
+# 3. Tauri & Rust 构建产出
+# ==========================================
+/src-tauri/target/
+# Cargo.lock 在 Tauri/Rust 应用中通常建议提交（确保依赖版本完全一致），
+# 但如果你希望每个人本地自动生成，也可以取消下面一行注释：
+# /src-tauri/Cargo.lock
+
+# ==========================================
+# 4. 跨平台 OS 杂项 (macOS <-> Windows 11)
+# ==========================================
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+[Dd]esktop.ini
+$RECYCLE.BIN/
+
+# ==========================================
+# 5. 编辑器配置 (TRAE / VS Code)
+# ==========================================
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
+
+# ==========================================
+# 6. 日志与打包安装包
+# ==========================================
+*.log
+*.app
+*.dmg
+*.exe
+*.msi
