@@ -13,14 +13,20 @@ function escapeHtml(raw: string): string {
 }
 
 /**
- * 递归遍历 token 树，将所有 HTML 和表格 token 转换为转义后的纯文本 token。
- * MVP 不渲染内联/块级 HTML 以及表格等扩展语法，防止 XSS 并保证降级行为一致。
+ * 危险 HTML / 脚本攻击正则，用于拦截 XSS。
+ */
+const DANGEROUS_HTML_PATTERN = /<script|<iframe|<object|<embed|on\w+\s*=|javascript:/i
+
+/**
+ * 递归遍历 token 树，过滤危险脚本标签，允许安全的 HTML 文本与颜色标签（如 <font color="...">, <span style="...">）。
  */
 function sanitizeTokens(tokens: Token[]): Token[] {
   return tokens.map((token) => {
-    if (token.type === 'html' || token.type === 'table') {
-      const raw = (token as Tokens.HTML | Tokens.Table).raw
-      return { type: 'text', raw, text: escapeHtml(raw) } as Tokens.Text
+    if (token.type === 'html') {
+      const raw = (token as Tokens.HTML).raw
+      if (DANGEROUS_HTML_PATTERN.test(raw)) {
+        return { type: 'text', raw, text: escapeHtml(raw) } as Tokens.Text
+      }
     }
     if ('tokens' in token && Array.isArray(token.tokens)) {
       return { ...token, tokens: sanitizeTokens(token.tokens) }

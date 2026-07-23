@@ -45,8 +45,8 @@ test.describe('Story 2.2：实现只读预览区与 Markdown 渲染', () => {
 
   // TID: S2.2-E2E-004
   // Priority: P1
-  // AC: HTML 标签与脚本被转义，防止 XSS。
-  test('HTML 标签应被转义防止 XSS', async ({ page }) => {
+  // AC: 危险脚本与 HTML 被过滤转义，防止 XSS。
+  test('HTML 脚本应被转义防止 XSS', async ({ page }) => {
     const editor = page.locator('.source-editor .cm-content')
     await editor.fill('<script>alert(1)</script>')
 
@@ -55,6 +55,18 @@ test.describe('Story 2.2：实现只读预览区与 Markdown 渲染', () => {
     await expect(preview.locator('script')).toHaveCount(0)
     // 文本内容中应包含原始标签文本
     await expect(preview).toContainText('<script>')
+  })
+
+  // TID: S2.2-E2E-004B
+  // Priority: P1
+  // AC: 允许 font color 与 span style 等安全文本颜色语法渲染。
+  test('应支持 font color 与 span style 颜色文本渲染', async ({ page }) => {
+    const editor = page.locator('.source-editor .cm-content')
+    await editor.fill('<font color="red">红色文本</font><span style="color: blue">蓝色文本</span>')
+
+    const preview = page.locator('.preview-content')
+    await expect(preview.locator('font[color="red"]')).toHaveText('红色文本')
+    await expect(preview.locator('span[style*="blue"]')).toHaveText('蓝色文本')
   })
 
   // TID: S2.2-E2E-005
@@ -213,15 +225,16 @@ test.describe('Story 2.2：实现只读预览区与 Markdown 渲染', () => {
   })
 
   // TID: S2.2-E2E-010
-  // Priority: P3
-  // AC: 不支持的扩展语法按纯文本或默认段落渲染，不报错。
-  test('不支持的扩展语法应按纯文本渲染', async ({ page }) => {
+  // Priority: P1
+  // AC: Markdown 表格（GFM Table）应原生渲染为标准的 <table> 结构。
+  test('Markdown 表格应渲染为标准的 table、th 与 td 结构', async ({ page }) => {
     const editor = page.locator('.source-editor .cm-content')
     await editor.fill('| col1 | col2 |\n| --- | --- |\n| a | b |')
 
     const preview = page.locator('.preview-content')
-    // 自定义 renderer 禁用表格渲染
-    await expect(preview.locator('table')).toHaveCount(0)
-    await expect(preview).toContainText('col1')
+    await expect(preview.locator('table')).toHaveCount(1)
+    await expect(preview.locator('th')).toHaveCount(2)
+    await expect(preview.locator('td')).toHaveCount(2)
+    await expect(preview.locator('th').first()).toHaveText('col1')
   })
 })

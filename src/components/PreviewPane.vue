@@ -169,4 +169,27 @@ function onPreviewClick(event: MouseEvent) {
   font-style: italic;
   color: var(--color-text-primary);
 }
+
+.preview-content :deep(table) {
+  width: 100%;
+  border-collapse: collapse;
+  margin: var(--spacing-md) 0;
+  font-size: var(--font-size-body);
+}
+
+.preview-content :deep(th),
+.preview-content :deep(td) {
+  border: 1px solid var(--color-border);
+  padding: var(--spacing-sm) var(--spacing-md);
+}
+
+.preview-content :deep(th) {
+  background: rgba(255, 255, 255, 0.05);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+}
+
+.preview-content :deep(tr:nth-child(even)) {
+  background: rgba(255, 255, 255, 0.02);
+}
 </style>
