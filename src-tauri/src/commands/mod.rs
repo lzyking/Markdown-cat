@@ -1,4 +1,6 @@
 /// 统一结果结构，所有后端命令返回此类型。
+///
+/// 无数据成功响应通过 `CmdResult::ok()` 构造，序列化后为 `{ ok: true }`。
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub struct CmdResult<T> {
     pub ok: bool,
@@ -26,16 +28,28 @@ impl<T> CmdResult<T> {
     }
 }
 
+impl CmdResult<()> {
+    /// 返回无 data 的成功响应，序列化后为 `{ ok: true }`。
+    pub fn ok() -> Self {
+        Self {
+            ok: true,
+            data: None,
+            error: None,
+        }
+    }
+}
+
 pub mod config;
+pub mod doc;
 
 /// 后端命令注册入口。
 #[tauri::command]
-pub async fn ping() -> CmdResult<String> {
+pub fn ping() -> CmdResult<String> {
     CmdResult::success("pong".to_string())
 }
 
 /// 初始化时调用，确认后端就绪。
 #[tauri::command]
 pub fn init_app() -> CmdResult<()> {
-    CmdResult::success(())
+    CmdResult::ok()
 }

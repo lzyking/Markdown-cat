@@ -1,7 +1,10 @@
 <script setup lang="ts">
+const emit = defineEmits<{
+  (e: 'open-settings'): void
+}>()
+
 function openSettings() {
-  // Story 4.1: 接入保存路径对话框
-  console.log('设置保存路径…')
+  emit('open-settings')
 }
 </script>
 
@@ -56,7 +59,7 @@ function openSettings() {
   top: 100%;
   left: 0;
   z-index: 100;
-  min-width: 180px;
+  min-width: calc(var(--spacing-lg) * 10);
   padding: var(--spacing-xs);
   background: var(--color-background-elevated);
   border: 1px solid var(--color-border);
@@ -70,7 +73,7 @@ function openSettings() {
 }
 
 .menu-row {
-  padding: 6px var(--spacing-sm);
+  padding: var(--spacing-xs) var(--spacing-sm);
   border-radius: var(--rounded-sm);
   font-size: var(--font-size-body);
   color: var(--color-text-primary);

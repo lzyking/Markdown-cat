@@ -70,7 +70,7 @@ context:
 
 ## Spec Change Log
 
-<!--  review loop 期间追加，初始为空 -->
+- 2026-07-22: Code review completed. Fixed P1/P2 findings (removed hardcoded layout values in App.vue and MenuBar.vue, fixed scrollbar hover color, tokenized status-dot size). P3 light-mode defense recorded in deferred-work.md as DW-5. Status remains `done`.
 
 ## Design Notes
 

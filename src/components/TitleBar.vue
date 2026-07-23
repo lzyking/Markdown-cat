@@ -66,8 +66,8 @@ defineProps<{
 }
 
 .status-dot {
-  width: 8px;
-  height: 8px;
+  width: var(--spacing-sm);
+  height: var(--spacing-sm);
   border-radius: var(--rounded-full);
 }
 

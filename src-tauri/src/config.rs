@@ -36,18 +36,28 @@ impl AppConfig {
     }
 }
 
+/// 检测目录是否可写：不存在则尝试创建，然后使用系统临时目录验证。
+/// 通过 tempfile crate 在目标目录创建临时文件，验证后自动清理，避免在应用目录中残留 `.write_test` 文件。
+pub fn is_dir_writable(dir: &Path) -> Result<(), std::io::Error> {
+    fs::create_dir_all(dir)?;
+
+    let temp_file = tempfile::NamedTempFile::new_in(dir)?;
+    temp_file.close()?;
+    Ok(())
+}
+
 /// 解析并返回应用可写目录。
 ///
 /// 优先使用 Tauri 提供的 app_data_dir（对应 macOS 下的 ~/Library/Application Support/<identifier>）；
 /// 若该目录不可写，则回退到用户文档目录下的 MarkdownCat 子目录；
-/// 若两者均不可用，返回错误码 ERR_APP_DIR_NOT_WRITABLE。
+/// 若两者均不可用，返回错误码 ERR_APP_DIR_NOT_WRITABLE，并附带底层错误原因。
 pub fn resolve_writable_dir(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> {
     let app_data_dir = app_handle
         .path()
         .app_data_dir()
         .map_err(|e| format!("{}: {}", ERR_APP_DIR_NOT_WRITABLE, e))?;
 
-    if is_dir_writable(&app_data_dir) {
+    if is_dir_writable(&app_data_dir).is_ok() {
         return Ok(app_data_dir);
     }
 
@@ -58,27 +68,29 @@ pub fn resolve_writable_dir(app_handle: &tauri::AppHandle) -> Result<PathBuf, St
         .map_err(|e| format!("{}: {}", ERR_APP_DIR_NOT_WRITABLE, e))?;
     let fallback_dir = documents_dir.join(FALLBACK_DIR_NAME);
 
-    if is_dir_writable(&fallback_dir) {
-        return Ok(fallback_dir);
+    match is_dir_writable(&fallback_dir) {
+        Ok(_) => Ok(fallback_dir),
+        Err(e) => Err(format!("{}: {}", ERR_APP_DIR_NOT_WRITABLE, e)),
     }
-
-    Err(ERR_APP_DIR_NOT_WRITABLE.to_string())
 }
 
-/// 检测目录是否可写：不存在则尝试创建，然后尝试写入临时文件验证。
-fn is_dir_writable(dir: &Path) -> bool {
-    if fs::create_dir_all(dir).is_err() {
-        return false;
+/// 解析并返回保存文件的最终有效目录。
+/// 优先使用 config.json 中读取到的自定义 save_path（需验证可写）；
+/// 若未配置 save_path 或配置路径不可写，则回退使用 resolve_writable_dir 默认规则。
+pub fn resolve_save_dir(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> {
+    if let Ok(dir) = resolve_writable_dir(app_handle) {
+        let config_path = config_file_path(&dir);
+        if let Ok(config) = read_config(&config_path) {
+            if let Some(ref custom_path) = config.save_path {
+                let custom_dir = PathBuf::from(custom_path);
+                if is_dir_writable(&custom_dir).is_ok() {
+                    return Ok(custom_dir);
+                }
+            }
+        }
     }
 
-    let test_file = dir.join(".write_test");
-    match fs::write(&test_file, b"") {
-        Ok(_) => {
-            let _ = fs::remove_file(&test_file);
-            true
-        }
-        Err(_) => false,
-    }
+    resolve_writable_dir(app_handle)
 }
 
 /// 读取配置文件。
@@ -91,7 +103,7 @@ pub fn read_config(config_path: &Path) -> Result<AppConfig, String> {
         Ok(content) => match serde_json::from_str::<AppConfig>(&content) {
             Ok(config) => Ok(config),
             Err(e) => {
-                eprintln!("配置解析失败，使用默认配置: {}", e);
+                eprintln!("Config parse failed, using defaults: {}", e);
                 Ok(AppConfig::default())
             }
         },

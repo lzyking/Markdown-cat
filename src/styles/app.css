@@ -104,6 +104,8 @@ body,
   line-height: var(--line-height-relaxed);
   color: var(--color-text-primary);
   background: var(--color-background);
+  /* MVP 阶段仅支持深色模式，显式强制暗色配色方案，避免跟随系统浅色模式 */
+  color-scheme: dark;
 }
 
 body {
@@ -141,5 +143,5 @@ samp {
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--color-border-subtle);
+  background: var(--color-text-muted);
 }

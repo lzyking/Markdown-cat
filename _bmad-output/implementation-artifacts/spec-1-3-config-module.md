@@ -93,3 +93,7 @@ context:
 - 检查 `src-tauri/src/lib.rs` 的 `invoke_handler` 包含 `get_app_dir`、`get_config`、`set_config`。
 - 检查 `capabilities/filesystem.json` 的 `fs:scope` 包含 `$APPDATA/**/*`（对应 `appDataDir()`）以及 `$DOCUMENT/MarkdownCat/**/*` 或 `$DOCUMENT/**/*`。
 - 检查配置模块中没有硬编码中文错误提示。
+
+## Spec Change Log
+
+- 2026-07-22: Code review completed. Fixed P1/P2 findings (Chinese log message translated, `get_config` now returns default config on resolve/read failures, `set_config` returns `{ ok: true }` via `CmdResult::ok()`, `resolve_writable_dir` includes underlying IO error reason, formatted capabilities JSON). P3 logging and `.write_test` cleanup recorded in deferred-work.md as DW-6 and DW-7. Status remains `done`.

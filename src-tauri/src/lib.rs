@@ -1,5 +1,6 @@
 mod commands;
 mod config;
+mod doc;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -11,7 +12,11 @@ pub fn run() {
             commands::init_app,
             commands::config::get_app_dir,
             commands::config::get_config,
-            commands::config::set_config
+            commands::config::set_config,
+            commands::config::select_save_dir,
+            commands::doc::generate_document_name,
+            commands::doc::get_blank_document,
+            commands::doc::save_document
         ])
         .setup(|_app| {
             #[cfg(debug_assertions)]
