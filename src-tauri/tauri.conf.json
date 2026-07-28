@@ -43,6 +43,11 @@
     "macOS": {
       "frameworks": [],
       "minimumSystemVersion": "11.0"
+    },
+    "windows": {
+      "nsis": {
+        "perMachine": false
+      }
     }
   },
   "plugins": {}
