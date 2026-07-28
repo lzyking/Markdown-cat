@@ -17,20 +17,20 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: 'npm'
 
       - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: stable
           targets: x86_64-pc-windows-msvc
 
       - name: Install Rust cache
         uses: swatinem/rust-cache@v2
         with:
-          workspaces: './src-tauri -> target'
+          workspaces: src-tauri
 
       - name: Install frontend dependencies
-        run: npm ci || npm install
+        run: npm install
 
       - name: Build Tauri App
         uses: tauri-apps/tauri-action@v2
@@ -44,3 +44,6 @@ jobs:
           path: |
             src-tauri/target/release/bundle/nsis/*.exe
             src-tauri/target/release/bundle/msi/*.msi
+            src-tauri/target/release/bundle/nsis/
+            src-tauri/target/release/bundle/msi/
+          if-no-files-found: warn
