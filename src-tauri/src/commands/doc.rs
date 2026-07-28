@@ -96,6 +96,14 @@ pub fn read_external_document(path: String) -> CmdResult<DocumentState> {
     if !p.exists() || !p.is_file() {
         return CmdResult::failure("ERR_FILE_NOT_FOUND".to_string());
     }
+    let ext = p
+        .extension()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    if ext != "md" && ext != "markdown" && ext != "txt" {
+        return CmdResult::failure("ERR_UNSUPPORTED_FILE_TYPE: 仅支持打开 .md, .markdown, .txt 格式文件".to_string());
+    }
     match std::fs::read_to_string(p) {
         Ok(content) => {
             let filename = p

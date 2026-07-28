@@ -64,10 +64,13 @@ function createState(doc: string): EditorState {
             const head = view.state.selection.main.head
             const coords = view.coordsAtPos(head)
             if (coords) {
-              emit('slashTrigger', {
-                top: coords.bottom + 4,
-                left: coords.left,
-              })
+              const menuHeight = 280
+              const spaceBelow = window.innerHeight - coords.bottom
+              const top = spaceBelow < menuHeight
+                ? Math.max(10, coords.top - menuHeight - 4)
+                : coords.bottom + 4
+              const left = Math.min(coords.left, window.innerWidth - 240)
+              emit('slashTrigger', { top, left })
             }
           }
           return false

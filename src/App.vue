@@ -46,6 +46,8 @@ function formatSaveError(rawError?: string): string {
   return `保存失败：${rawError}`
 }
 
+const currentFilePath = ref<string | null>(null)
+
 function triggerDebouncedAutoSave(newContent: string) {
   if (autoSaveTimer !== null) {
     window.clearTimeout(autoSaveTimer)
@@ -54,20 +56,38 @@ function triggerDebouncedAutoSave(newContent: string) {
 
   autoSaveTimer = window.setTimeout(async () => {
     try {
-      const res = await invoke<CmdResult<SaveResult>>('save_document', {
-        filename: filename.value,
-        content: newContent,
-        savePath: currentSavePath.value || undefined,
-      })
-      if (res.ok && res.data) {
-        saveStatus.value = 'success'
-        saveMessage.value = `已保存至 ${filename.value}`
-        if (!(window as any).__TAURI_MOCK__) {
-          await invoke('update_last_opened_file', { filePath: res.data.path })
+      if (currentFilePath.value) {
+        const res = await invoke<CmdResult<SaveResult>>('save_document_as', {
+          targetPath: currentFilePath.value,
+          content: newContent,
+        })
+        if (res.ok && res.data) {
+          saveStatus.value = 'success'
+          saveMessage.value = `已保存至 ${filename.value}`
+          if (!(window as any).__TAURI_MOCK__) {
+            await invoke('update_last_opened_file', { filePath: res.data.path })
+          }
+        } else {
+          saveStatus.value = 'failure'
+          saveMessage.value = formatSaveError(res.error)
         }
       } else {
-        saveStatus.value = 'failure'
-        saveMessage.value = formatSaveError(res.error)
+        const res = await invoke<CmdResult<SaveResult>>('save_document', {
+          filename: filename.value,
+          content: newContent,
+          savePath: currentSavePath.value || undefined,
+        })
+        if (res.ok && res.data) {
+          currentFilePath.value = res.data.path
+          saveStatus.value = 'success'
+          saveMessage.value = `已保存至 ${filename.value}`
+          if (!(window as any).__TAURI_MOCK__) {
+            await invoke('update_last_opened_file', { filePath: res.data.path })
+          }
+        } else {
+          saveStatus.value = 'failure'
+          saveMessage.value = formatSaveError(res.error)
+        }
       }
     } catch (err: any) {
       saveStatus.value = 'failure'
@@ -91,6 +111,7 @@ async function loadFileFromPath(filePath: string) {
   try {
     const res = await invoke<CmdResult<DocumentState>>('read_external_document', { path: filePath })
     if (res.ok && res.data) {
+      currentFilePath.value = filePath
       filename.value = res.data.filename
       content.value = res.data.content
       saveStatus.value = 'success'
@@ -135,6 +156,7 @@ async function handleSaveAsFile() {
         content: content.value,
       })
       if (res.ok && res.data) {
+        currentFilePath.value = res.data.path
         filename.value = res.data.filename
         saveStatus.value = 'success'
         saveMessage.value = `已另存为 ${res.data.filename}`
@@ -155,6 +177,12 @@ async function onFileDrop(e: DragEvent) {
   e.preventDefault()
   if (!e.dataTransfer || !e.dataTransfer.files.length) return
   const file = e.dataTransfer.files[0]
+  const ext = file.name.split('.').pop()?.toLowerCase() || ''
+  if (ext !== 'md' && ext !== 'markdown' && ext !== 'txt') {
+    saveStatus.value = 'failure'
+    saveMessage.value = '拖拽打开失败：仅支持打开 .md, .markdown, .txt 扩展名的文本文件'
+    return
+  }
   const filePath = (file as any).path
   if (filePath) {
     await loadFileFromPath(filePath)
