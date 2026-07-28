@@ -115,7 +115,11 @@ test.describe('Story 2.1：集成源码编辑器与文档状态通道', () => {
     const editor = page.locator('.source-editor .cm-content')
     await editor.fill('Hello')
     await editor.fill('')
-    await expect(editor).toHaveText('')
+    const docText = await page.evaluate(() => {
+      const cmView = (document.querySelector('.source-editor') as any)?.__codemirrorView
+      return cmView?.state.doc.toString()
+    })
+    expect(docText).toBe('')
   })
 
   // TID: S2.1-E2E-005

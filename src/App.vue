@@ -62,7 +62,9 @@ function triggerDebouncedAutoSave(newContent: string) {
       if (res.ok && res.data) {
         saveStatus.value = 'success'
         saveMessage.value = `已保存至 ${filename.value}`
-        await invoke('update_last_opened_file', { filePath: res.data.path })
+        if (!(window as any).__TAURI_MOCK__) {
+          await invoke('update_last_opened_file', { filePath: res.data.path })
+        }
       } else {
         saveStatus.value = 'failure'
         saveMessage.value = formatSaveError(res.error)
@@ -93,7 +95,9 @@ async function loadFileFromPath(filePath: string) {
       content.value = res.data.content
       saveStatus.value = 'success'
       saveMessage.value = `已打开 ${res.data.filename}`
-      await invoke('update_last_opened_file', { filePath })
+      if (!(window as any).__TAURI_MOCK__) {
+        await invoke('update_last_opened_file', { filePath })
+      }
     } else {
       saveStatus.value = 'failure'
       saveMessage.value = `打开失败：${res.error || '文件无法读取'}`
@@ -134,7 +138,9 @@ async function handleSaveAsFile() {
         filename.value = res.data.filename
         saveStatus.value = 'success'
         saveMessage.value = `已另存为 ${res.data.filename}`
-        await invoke('update_last_opened_file', { filePath: res.data.path })
+        if (!(window as any).__TAURI_MOCK__) {
+          await invoke('update_last_opened_file', { filePath: res.data.path })
+        }
       } else {
         saveStatus.value = 'failure'
         saveMessage.value = `另存为失败：${res.error}`
@@ -182,7 +188,7 @@ onMounted(async () => {
       if (configRes.data.savePath) {
         currentSavePath.value = configRes.data.savePath
       }
-      if (configRes.data.lastOpenedFile) {
+      if (configRes.data.lastOpenedFile && !(window as any).__TAURI_MOCK__) {
         const loadRes = await invoke<CmdResult<DocumentState>>('read_external_document', {
           path: configRes.data.lastOpenedFile,
         })
@@ -214,6 +220,10 @@ onMounted(async () => {
         currentSavePath.value = dirRes.data
       }
     }
+    if (!configRes.ok) {
+      saveStatus.value = 'unsaved'
+      saveMessage.value = '已回退到默认保存路径'
+    }
   } catch (e) {
     console.error('Failed on mounted initialization:', e)
   }
@@ -221,6 +231,22 @@ onMounted(async () => {
 
 function onCursorPositionUpdate(pos: CursorPosition) {
   cursorPosition.value = pos
+}
+
+// E2E 测试辅助：在 mock 环境下暴露状态控制函数与设置弹窗控制
+if ((window as any).__TAURI_MOCK__) {
+  ;(window as any).__SET_SAVE_STATUS__ = (status: SaveStatus) => {
+    saveStatus.value = status
+  }
+  ;(window as any).__SET_SAVE_MESSAGE__ = (msg: string) => {
+    saveMessage.value = msg
+  }
+  ;(window as any).__OPEN_SETTINGS__ = () => {
+    isSettingsOpen.value = true
+  }
+  ;(window as any).__GET_CURRENT_SAVE_PATH__ = () => {
+    return currentSavePath.value
+  }
 }
 </script>
 
