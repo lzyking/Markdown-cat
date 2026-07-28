@@ -35,7 +35,7 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path "src-tauri/target/release/portable"
-          Copy-Item "src-tauri/target/release/markdown-cat.exe" "src-tauri/target/release/portable/Markdown-Cat.exe"
+          Get-ChildItem -Path "src-tauri/target/release" -Filter "*.exe" -File | Where-Object { $_.Name -notlike "*setup*" -and $_.Name -notlike "*installer*" } | Copy-Item -Destination "src-tauri/target/release/portable/Markdown-Cat.exe"
           Compress-Archive -Path "src-tauri/target/release/portable/*" -DestinationPath "src-tauri/target/release/Markdown-Cat-Portable-Windows.zip" -Force
 
       - name: Upload Windows Packages (Portable Zip & Non-Admin Installer)
