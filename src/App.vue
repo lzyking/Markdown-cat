@@ -138,17 +138,21 @@ async function handleOpenFile() {
       await loadFileFromPath(selected)
     }
   } catch (err: any) {
+    saveStatus.value = 'failure'
+    saveMessage.value = `打开文件调起对话框失败：${err?.message || err}`
     console.error('Open file dialog error:', err)
   }
 }
 
 async function handleSaveAsFile() {
   try {
+    const defaultName = filename.value || 'Untitled.md'
+    const defaultPath = currentSavePath.value
+      ? `${currentSavePath.value}/${defaultName}`
+      : defaultName
     const target = await save({
-      defaultPath: filename.value.startsWith('New_')
-        ? `${currentSavePath.value}/${filename.value}`
-        : filename.value,
-      filters: [{ name: 'Markdown Document', extensions: ['md'] }],
+      defaultPath,
+      filters: [{ name: 'Markdown Document', extensions: ['md', 'markdown', 'txt'] }],
     })
     if (target && typeof target === 'string') {
       const res = await invoke<CmdResult<SaveResult>>('save_document_as', {
@@ -169,6 +173,8 @@ async function handleSaveAsFile() {
       }
     }
   } catch (err: any) {
+    saveStatus.value = 'failure'
+    saveMessage.value = `另存为调起对话框失败：${err?.message || err}`
     console.error('Save as file error:', err)
   }
 }
