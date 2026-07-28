@@ -1,7 +1,17 @@
 <script setup lang="ts">
 const emit = defineEmits<{
+  (e: 'open-file'): void
+  (e: 'save-as-file'): void
   (e: 'open-settings'): void
 }>()
+
+function openFile() {
+  emit('open-file')
+}
+
+function saveAsFile() {
+  emit('save-as-file')
+}
 
 function openSettings() {
   emit('open-settings')
@@ -16,7 +26,15 @@ function openSettings() {
         <div class="menu-row" role="menuitem" @click="openSettings">设置保存路径…</div>
       </div>
     </div>
-    <div class="menu-item disabled" role="menuitem" aria-disabled="true">文件</div>
+    <div class="menu-item" tabindex="0" role="menuitem" aria-haspopup="true">
+      文件
+      <div class="menu-dropdown">
+        <div class="menu-row" role="menuitem" @click="openFile">打开文件 (Open)…</div>
+        <div class="menu-row" role="menuitem" @click="saveAsFile">另存为 (Save As)…</div>
+        <div class="menu-divider"></div>
+        <div class="menu-row" role="menuitem" @click="openSettings">设置默认保存路径…</div>
+      </div>
+    </div>
     <div class="menu-item disabled" role="menuitem" aria-disabled="true">编辑</div>
     <div class="menu-item disabled" role="menuitem" aria-disabled="true">视图</div>
     <div class="menu-item disabled" role="menuitem" aria-disabled="true">帮助</div>
@@ -81,5 +99,11 @@ function openSettings() {
 
 .menu-row:hover {
   background: var(--color-background-surface);
+}
+
+.menu-divider {
+  height: 1px;
+  background: var(--color-border-subtle, #3a3f4b);
+  margin: var(--spacing-xs) 0;
 }
 </style>

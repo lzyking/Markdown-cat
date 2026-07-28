@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch } from 'vue'
-import { EditorView, keymap } from '@codemirror/view'
+import { EditorView, keymap, placeholder } from '@codemirror/view'
 import { EditorState } from '@codemirror/state'
 import { standardKeymap, history, historyKeymap, undo, redo, selectAll } from '@codemirror/commands'
 
@@ -16,11 +16,38 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'update:modelValue', value: string): void
   (e: 'cursorChange', pos: CursorPosition): void
+  (e: 'slashTrigger', position: { top: number; left: number }): void
 }>()
 
 const containerRef = ref<HTMLElement | null>(null)
 let view: EditorView | null = null
 let isApplyingExternalUpdate = false
+
+function insertTemplate(template: string, cursorOffset?: number) {
+  if (!view) return
+  const { from, to } = view.state.selection.main
+  
+  // 检查光标前是否为 '/' 字符，若是则替换
+  let start = from
+  if (start > 0 && view.state.doc.sliceString(start - 1, start) === '/') {
+    start = start - 1
+  }
+
+  isApplyingExternalUpdate = true
+  view.dispatch({
+    changes: { from: start, to, insert: template },
+    selection: cursorOffset
+      ? { anchor: start + template.length - cursorOffset }
+      : { anchor: start + template.length },
+  })
+  isApplyingExternalUpdate = false
+  emit('update:modelValue', view.state.doc.toString())
+  view.focus()
+}
+
+defineExpose({
+  insertTemplate,
+})
 
 function createState(doc: string): EditorState {
   return EditorState.create({
@@ -30,6 +57,22 @@ function createState(doc: string): EditorState {
       history(),
       keymap.of(historyKeymap),
       EditorView.lineWrapping,
+      placeholder('按 / 键快速插入 markdown 格式'),
+      EditorView.domEventHandlers({
+        keydown(event, view) {
+          if (event.key === '/') {
+            const head = view.state.selection.main.head
+            const coords = view.coordsAtPos(head)
+            if (coords) {
+              emit('slashTrigger', {
+                top: coords.bottom + 4,
+                left: coords.left,
+              })
+            }
+          }
+          return false
+        },
+      }),
       EditorView.updateListener.of((update) => {
         if (update.docChanged) {
           emit('update:modelValue', update.state.doc.toString())

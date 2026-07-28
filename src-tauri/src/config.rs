@@ -9,7 +9,7 @@ pub const ERR_CONFIG_WRITE_FAILED: &str = "ERR_CONFIG_WRITE_FAILED";
 pub const ERR_CONFIG_READ_FAILED: &str = "ERR_CONFIG_READ_FAILED";
 
 const CONFIG_FILE_NAME: &str = "config.json";
-const FALLBACK_DIR_NAME: &str = "MarkdownCat";
+const FALLBACK_DIR_NAME: &str = "My Markdown";
 
 /// 应用配置结构。
 /// 新增未知字段默认忽略，以保证向后兼容。
@@ -19,11 +19,17 @@ pub struct AppConfig {
     /// 默认保存路径，null 表示使用系统默认规则。
     #[serde(rename = "savePath")]
     pub save_path: Option<String>,
+    /// 上次打开的文件完整路径，null 表示无。
+    #[serde(rename = "lastOpenedFile")]
+    pub last_opened_file: Option<String>,
 }
 
 impl Default for AppConfig {
     fn default() -> Self {
-        Self { save_path: None }
+        Self {
+            save_path: None,
+            last_opened_file: None,
+        }
     }
 }
 
@@ -32,6 +38,7 @@ impl AppConfig {
     pub fn with_save_path(save_path: String) -> Self {
         Self {
             save_path: Some(save_path),
+            last_opened_file: None,
         }
     }
 }
@@ -48,10 +55,17 @@ pub fn is_dir_writable(dir: &Path) -> Result<(), std::io::Error> {
 
 /// 解析并返回应用可写目录。
 ///
-/// 优先使用 Tauri 提供的 app_data_dir（对应 macOS 下的 ~/Library/Application Support/<identifier>）；
-/// 若该目录不可写，则回退到用户文档目录下的 MarkdownCat 子目录；
-/// 若两者均不可用，返回错误码 ERR_APP_DIR_NOT_WRITABLE，并附带底层错误原因。
+/// 优先使用用户文档目录下的 My Markdown 子目录 (~/Documents/My Markdown)；
+/// 若该目录不可用，尝试使用 Tauri 提供的 app_data_dir；
+/// 若两者均不可用，返回错误码 ERR_APP_DIR_NOT_WRITABLE。
 pub fn resolve_writable_dir(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> {
+    if let Ok(documents_dir) = app_handle.path().document_dir() {
+        let my_markdown_dir = documents_dir.join(FALLBACK_DIR_NAME);
+        if is_dir_writable(&my_markdown_dir).is_ok() {
+            return Ok(my_markdown_dir);
+        }
+    }
+
     let app_data_dir = app_handle
         .path()
         .app_data_dir()
@@ -61,17 +75,7 @@ pub fn resolve_writable_dir(app_handle: &tauri::AppHandle) -> Result<PathBuf, St
         return Ok(app_data_dir);
     }
 
-    // 回退到 ~/Documents/MarkdownCat
-    let documents_dir = app_handle
-        .path()
-        .document_dir()
-        .map_err(|e| format!("{}: {}", ERR_APP_DIR_NOT_WRITABLE, e))?;
-    let fallback_dir = documents_dir.join(FALLBACK_DIR_NAME);
-
-    match is_dir_writable(&fallback_dir) {
-        Ok(_) => Ok(fallback_dir),
-        Err(e) => Err(format!("{}: {}", ERR_APP_DIR_NOT_WRITABLE, e)),
-    }
+    Err(ERR_APP_DIR_NOT_WRITABLE.to_string())
 }
 
 /// 解析并返回保存文件的最终有效目录。

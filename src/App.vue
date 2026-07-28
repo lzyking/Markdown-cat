@@ -1,55 +1,48 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
+import { open, save } from '@tauri-apps/plugin-dialog'
 import TitleBar from './components/TitleBar.vue'
 import MenuBar from './components/MenuBar.vue'
 import StatusBar from './components/StatusBar.vue'
 import SourceEditor from './components/SourceEditor.vue'
 import PreviewPane from './components/PreviewPane.vue'
 import SettingsModal from './components/SettingsModal.vue'
+import SlashMenu, { type SlashMenuItem } from './components/SlashMenu.vue'
 import type { CursorPosition } from './components/SourceEditor.vue'
 import { DocumentState, CmdResult, SaveResult } from './lib/types'
 
 const filename = ref('New_*.md')
 const content = ref('')
 const cursorPosition = ref<CursorPosition>({ line: 1, column: 1 })
+const sourceEditorRef = ref<any>(null)
 
-// Story 4.1: 设置保存路径 Modal 状态
+// 斜杠快捷插入菜单状态
+const isSlashMenuOpen = ref(false)
+const slashMenuPosition = ref({ top: 0, left: 0 })
+
+// Settings Modal 状态
 const isSettingsOpen = ref(false)
 const currentSavePath = ref('')
 
-// Story 2.3: 保存状态三态管理（unsaved / success / failure）
+// 保存状态管理
 type SaveStatus = 'unsaved' | 'success' | 'failure'
 const saveStatus = ref<SaveStatus>('unsaved')
 const saveMessage = ref('')
 
-// StatusBar 的 status prop 不接受 'unsaved'，需要映射为 'normal'
 const statusBarStatus = computed(() =>
   saveStatus.value === 'unsaved' ? 'normal' : saveStatus.value
 )
 
-// Story 3.1: 300ms 防抖自动保存
 let autoSaveTimer: number | null = null
 
 function formatSaveError(rawError?: string): string {
-  if (!rawError) {
-    return '保存失败：未知错误'
-  }
-  if (rawError === 'ERR_SAVE_FAILED') {
-    return '保存失败：文件保存失败'
-  }
-  if (rawError === 'ERR_DIR_NOT_WRITABLE') {
-    return '保存失败：应用目录不可写，请设置保存路径'
-  }
-  if (/permission/i.test(rawError)) {
-    return '保存失败：权限不足'
-  }
-  if (/space/i.test(rawError)) {
-    return '保存失败：磁盘空间不足'
-  }
-  if (rawError.startsWith('保存失败：')) {
-    return rawError
-  }
+  if (!rawError) return '保存失败：未知错误'
+  if (rawError === 'ERR_SAVE_FAILED') return '保存失败：文件保存失败'
+  if (rawError === 'ERR_DIR_NOT_WRITABLE') return '保存失败：应用目录不可写，请设置保存路径'
+  if (/permission/i.test(rawError)) return '保存失败：权限不足'
+  if (/space/i.test(rawError)) return '保存失败：磁盘空间不足'
+  if (rawError.startsWith('保存失败：')) return rawError
   return `保存失败：${rawError}`
 }
 
@@ -66,9 +59,10 @@ function triggerDebouncedAutoSave(newContent: string) {
         content: newContent,
         savePath: currentSavePath.value || undefined,
       })
-      if (res.ok) {
+      if (res.ok && res.data) {
         saveStatus.value = 'success'
         saveMessage.value = `已保存至 ${filename.value}`
+        await invoke('update_last_opened_file', { filePath: res.data.path })
       } else {
         saveStatus.value = 'failure'
         saveMessage.value = formatSaveError(res.error)
@@ -80,7 +74,6 @@ function triggerDebouncedAutoSave(newContent: string) {
   }, 300)
 }
 
-// content 变化时重置保存状态为 unsaved，并触发 300ms 防抖保存
 watch(content, (newVal) => {
   saveStatus.value = 'unsaved'
   triggerDebouncedAutoSave(newVal)
@@ -92,30 +85,133 @@ function onPathUpdated(newPath: string) {
   saveMessage.value = '保存路径已更新'
 }
 
+async function loadFileFromPath(filePath: string) {
+  try {
+    const res = await invoke<CmdResult<DocumentState>>('read_external_document', { path: filePath })
+    if (res.ok && res.data) {
+      filename.value = res.data.filename
+      content.value = res.data.content
+      saveStatus.value = 'success'
+      saveMessage.value = `已打开 ${res.data.filename}`
+      await invoke('update_last_opened_file', { filePath })
+    } else {
+      saveStatus.value = 'failure'
+      saveMessage.value = `打开失败：${res.error || '文件无法读取'}`
+    }
+  } catch (err: any) {
+    console.error('Failed to load file from path:', err)
+  }
+}
+
+async function handleOpenFile() {
+  try {
+    const selected = await open({
+      multiple: false,
+      filters: [{ name: 'Markdown Document', extensions: ['md', 'markdown', 'txt'] }],
+    })
+    if (selected && typeof selected === 'string') {
+      await loadFileFromPath(selected)
+    }
+  } catch (err: any) {
+    console.error('Open file dialog error:', err)
+  }
+}
+
+async function handleSaveAsFile() {
+  try {
+    const target = await save({
+      defaultPath: filename.value.startsWith('New_')
+        ? `${currentSavePath.value}/${filename.value}`
+        : filename.value,
+      filters: [{ name: 'Markdown Document', extensions: ['md'] }],
+    })
+    if (target && typeof target === 'string') {
+      const res = await invoke<CmdResult<SaveResult>>('save_document_as', {
+        targetPath: target,
+        content: content.value,
+      })
+      if (res.ok && res.data) {
+        filename.value = res.data.filename
+        saveStatus.value = 'success'
+        saveMessage.value = `已另存为 ${res.data.filename}`
+        await invoke('update_last_opened_file', { filePath: res.data.path })
+      } else {
+        saveStatus.value = 'failure'
+        saveMessage.value = `另存为失败：${res.error}`
+      }
+    }
+  } catch (err: any) {
+    console.error('Save as file error:', err)
+  }
+}
+
+async function onFileDrop(e: DragEvent) {
+  e.preventDefault()
+  if (!e.dataTransfer || !e.dataTransfer.files.length) return
+  const file = e.dataTransfer.files[0]
+  const filePath = (file as any).path
+  if (filePath) {
+    await loadFileFromPath(filePath)
+  } else {
+    const text = await file.text()
+    filename.value = file.name
+    content.value = text
+    saveStatus.value = 'success'
+    saveMessage.value = `已从拖拽打开 ${file.name}`
+  }
+}
+
+function onSlashTrigger(pos: { top: number; left: number }) {
+  slashMenuPosition.value = pos
+  isSlashMenuOpen.value = true
+}
+
+function onSlashSelect(item: SlashMenuItem) {
+  if (sourceEditorRef.value) {
+    sourceEditorRef.value.insertTemplate(item.template, item.cursorOffset)
+  }
+  isSlashMenuOpen.value = false
+}
+
 onMounted(async () => {
   try {
-    const result = await invoke<CmdResult<DocumentState>>('get_blank_document')
-    if (result.ok && result.data) {
-      filename.value = result.data.filename
-      content.value = result.data.content
-    } else if (result.error) {
-      filename.value = 'New_Untitled.md'
-      saveStatus.value = 'failure'
-      saveMessage.value = `文档初始化警告：${result.error}`
-      console.error('Failed to initialize blank document:', result.error)
+    const configRes = await invoke<CmdResult<{ savePath: string | null; lastOpenedFile: string | null }>>('get_config')
+    let lastFileLoaded = false
+
+    if (configRes.ok && configRes.data) {
+      if (configRes.data.savePath) {
+        currentSavePath.value = configRes.data.savePath
+      }
+      if (configRes.data.lastOpenedFile) {
+        const loadRes = await invoke<CmdResult<DocumentState>>('read_external_document', {
+          path: configRes.data.lastOpenedFile,
+        })
+        if (loadRes.ok && loadRes.data) {
+          filename.value = loadRes.data.filename
+          content.value = loadRes.data.content
+          saveStatus.value = 'success'
+          saveMessage.value = `已自动恢复上次编辑文件：${loadRes.data.filename}`
+          lastFileLoaded = true
+        }
+      }
     }
 
-    const configRes = await invoke<CmdResult<{ savePath: string | null }>>('get_config')
-    if (configRes.ok && configRes.data?.savePath) {
-      currentSavePath.value = configRes.data.savePath
-    } else {
+    if (!lastFileLoaded) {
+      const result = await invoke<CmdResult<DocumentState>>('get_blank_document')
+      if (result.ok && result.data) {
+        filename.value = result.data.filename
+        content.value = result.data.content
+      } else if (result.error) {
+        filename.value = 'New_Untitled.md'
+        saveStatus.value = 'failure'
+        saveMessage.value = `文档初始化警告：${result.error}`
+      }
+    }
+
+    if (!currentSavePath.value) {
       const dirRes = await invoke<CmdResult<string>>('get_app_dir')
       if (dirRes.ok && dirRes.data) {
         currentSavePath.value = dirRes.data
-      }
-      if (!configRes.ok) {
-        saveStatus.value = 'unsaved'
-        saveMessage.value = '已回退到默认保存路径'
       }
     }
   } catch (e) {
@@ -126,33 +222,27 @@ onMounted(async () => {
 function onCursorPositionUpdate(pos: CursorPosition) {
   cursorPosition.value = pos
 }
-
-// E2E 测试辅助：在 mock 环境下暴露状态控制函数与设置弹窗控制
-if ((window as any).__TAURI_MOCK__) {
-  ;(window as any).__SET_SAVE_STATUS__ = (status: SaveStatus) => {
-    saveStatus.value = status
-  }
-  ;(window as any).__SET_SAVE_MESSAGE__ = (msg: string) => {
-    saveMessage.value = msg
-  }
-  ;(window as any).__OPEN_SETTINGS__ = () => {
-    isSettingsOpen.value = true
-  }
-  ;(window as any).__GET_CURRENT_SAVE_PATH__ = () => {
-    return currentSavePath.value
-  }
-}
 </script>
 
 <template>
-  <div class="app">
+  <div
+    class="app"
+    @dragover.prevent
+    @drop.prevent="onFileDrop"
+  >
     <TitleBar :filename="filename" :save-status="saveStatus" />
-    <MenuBar @open-settings="isSettingsOpen = true" />
+    <MenuBar
+      @open-file="handleOpenFile"
+      @save-as-file="handleSaveAsFile"
+      @open-settings="isSettingsOpen = true"
+    />
     <main class="editor-workspace">
       <section class="editor-pane source-pane" aria-label="源码编辑器">
         <SourceEditor
+          ref="sourceEditorRef"
           v-model="content"
           @cursor-change="onCursorPositionUpdate"
+          @slash-trigger="onSlashTrigger"
         />
       </section>
       <section class="editor-pane preview-pane">
@@ -166,6 +256,13 @@ if ((window as any).__TAURI_MOCK__) {
       :status="statusBarStatus"
     />
 
+    <SlashMenu
+      v-if="isSlashMenuOpen"
+      :position="slashMenuPosition"
+      @select="onSlashSelect"
+      @close="isSlashMenuOpen = false"
+    />
+
     <SettingsModal
       :is-open="isSettingsOpen"
       :current-path="currentSavePath"
@@ -176,7 +273,6 @@ if ((window as any).__TAURI_MOCK__) {
 </template>
 
 <style scoped>
-/* 应用根容器：垂直堆叠标题栏、菜单栏、主编辑区、状态栏 */
 .app {
   display: flex;
   flex-direction: column;
@@ -185,9 +281,9 @@ if ((window as any).__TAURI_MOCK__) {
   overflow: hidden;
   background: var(--color-background);
   color: var(--color-text-primary);
+  position: relative;
 }
 
-/* 主编辑区：占据标题栏、菜单栏、状态栏之外的所有剩余空间 */
 .editor-workspace {
   display: flex;
   flex: 1;
@@ -202,13 +298,11 @@ if ((window as any).__TAURI_MOCK__) {
   overflow: hidden;
 }
 
-/* 源码编辑区：深色背景，右侧主分隔线 */
 .source-pane {
   background: var(--color-background);
   border-right: 1px solid var(--color-border);
 }
 
-/* 预览区：次级表面背景 */
 .preview-pane {
   background: var(--color-background-surface);
 }

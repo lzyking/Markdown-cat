@@ -88,3 +88,46 @@ pub fn save_document(
         Err(e) => CmdResult::failure(e),
     }
 }
+
+/// 读取外部文件路径的内容与文件名。
+#[tauri::command]
+pub fn read_external_document(path: String) -> CmdResult<DocumentState> {
+    let p = std::path::Path::new(&path);
+    if !p.exists() || !p.is_file() {
+        return CmdResult::failure("ERR_FILE_NOT_FOUND".to_string());
+    }
+    match std::fs::read_to_string(p) {
+        Ok(content) => {
+            let filename = p
+                .file_name()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| "Untitled.md".to_string());
+            CmdResult::success(DocumentState { filename, content })
+        }
+        Err(e) => CmdResult::failure(format!("ERR_READ_FILE_FAILED: {}", e)),
+    }
+}
+
+/// 将文档另存为指定绝对路径。
+#[tauri::command]
+pub fn save_document_as(target_path: String, content: String) -> CmdResult<SaveResult> {
+    let path = std::path::Path::new(&target_path);
+    if let Some(parent) = path.parent() {
+        if let Err(e) = std::fs::create_dir_all(parent) {
+            return CmdResult::failure(format!("ERR_DIR_CREATE_FAILED: {}", e));
+        }
+    }
+    match std::fs::write(path, &content) {
+        Ok(_) => {
+            let filename = path
+                .file_name()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| "Untitled.md".to_string());
+            CmdResult::success(SaveResult {
+                filename,
+                path: target_path,
+            })
+        }
+        Err(e) => CmdResult::failure(format!("ERR_SAVE_FAILED: {}", e)),
+    }
+}

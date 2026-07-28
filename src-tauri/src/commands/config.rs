@@ -38,7 +38,25 @@ pub fn set_config(app_handle: tauri::AppHandle, save_path: String) -> CmdResult<
     match config::resolve_writable_dir(&app_handle) {
         Ok(dir) => {
             let config_path = config::config_file_path(&dir);
-            let cfg = AppConfig::with_save_path(save_path);
+            let mut cfg = config::read_config(&config_path).unwrap_or_default();
+            cfg.save_path = Some(save_path);
+            match config::write_config(&config_path, &cfg) {
+                Ok(_) => CmdResult::ok(),
+                Err(e) => CmdResult::failure(e),
+            }
+        }
+        Err(e) => CmdResult::failure(e),
+    }
+}
+
+/// 更新最近一次打开的文件路径。
+#[tauri::command]
+pub fn update_last_opened_file(app_handle: tauri::AppHandle, file_path: Option<String>) -> CmdResult<()> {
+    match config::resolve_writable_dir(&app_handle) {
+        Ok(dir) => {
+            let config_path = config::config_file_path(&dir);
+            let mut cfg = config::read_config(&config_path).unwrap_or_default();
+            cfg.last_opened_file = file_path;
             match config::write_config(&config_path, &cfg) {
                 Ok(_) => CmdResult::ok(),
                 Err(e) => CmdResult::failure(e),
