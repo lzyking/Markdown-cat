@@ -71,6 +71,29 @@ development_status:
   4-2-folder-config-write: done
   4-3-path-update-persistence: done
   epic-4-retrospective: done
+  epic-5: in-progress
+  5-1-resizable-splitter-component: ready-for-dev
+  5-2-responsive-preview-auto-adapter: ready-for-dev
+  epic-5-retrospective: optional
+  epic-6: in-progress
+  6-1-antigravity-color-tokens: ready-for-dev
+  6-2-file-menu-theme-selector: ready-for-dev
+  epic-6-retrospective: optional
+  epic-7: in-progress
+  7-1-slash-command-task-list: ready-for-dev
+  7-2-clipboard-image-paste-and-local-storage: ready-for-dev
+  epic-7-retrospective: optional
+  epic-8: in-progress
+  8-1-export-self-contained-html: ready-for-dev
+  8-2-export-pdf-with-exact-styles: ready-for-dev
+  epic-8-retrospective: optional
+  epic-9: in-progress
+  9-1-confluence-config-setting-dialog: ready-for-dev
+  9-2-confluence-md2cf-publisher: ready-for-dev
+  epic-9-retrospective: optional
+  epic-10: in-progress
+  10-1-windows-noconsole-gui-attribute: ready-for-dev
+  epic-10-retrospective: optional
 
 action_items:
   - id: A2-E2E-STORY-2-1

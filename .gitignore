@@ -67,3 +67,6 @@ $RECYCLE.BIN/
 *.dmg
 *.exe
 *.msi
+.bmad-loop/runs/
+.bmad-loop/cache/
+.bmad-loop/policy.toml
