@@ -15,3 +15,4 @@ status: ready-for-dev
 2. **测试连接 (Test Connection)**: 点击按钮调用 Confluence REST API `/rest/api/space/{spaceKey}` 进行连通性与权限校验，返回成功或明确报错信息。
 3. **安全存储**: API Token 安全保存在配置中，防止明文暴露。
 4. **自签名 SSL 支持与工具校验**: 设置界面提供“允许自签名证书 (Ignore SSL Verification)”开关；测试连接时自动检测系统 `md2cf` 依赖状态或提供 REST API 直连模式选项。
+5. **输入正则前端校验**: 对 Space Key（字母数字下划线）与 Parent Page ID（纯数字字符串）进行即时正则表达式格式校验与失焦提示。
