@@ -2,7 +2,8 @@
 id: 5-1-resizable-splitter-component
 title: Resizable Splitter Component between Editor and Preview
 epic: epic-5
-status: ready-for-dev
+status: in-progress
+baseline_revision: 1671f72d725ec6d44066b4ea36869751cf1a3a04
 ---
 
 # Story 5.1: Resizable Splitter Component between Editor and Preview
