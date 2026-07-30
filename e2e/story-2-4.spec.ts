@@ -89,8 +89,8 @@ test.describe('Story 2.4：空状态提示与双栏响应式布局', () => {
     expect(previewBox).not.toBeNull()
 
     if (sourceBox && previewBox) {
-      // 允许 1px 浮点取整误差
-      expect(Math.abs(sourceBox.width - previewBox.width)).toBeLessThanOrEqual(1)
+      // 默认两栏接近 1:1；Story 5.1 加入 4px 可拖动 splitter，允许存在 splitter 宽度误差
+      expect(Math.abs(sourceBox.width - previewBox.width)).toBeLessThanOrEqual(5)
       expect(sourceBox.height).toBe(previewBox.height)
       // 总可分配高度应该等于 700 - (38 + 28 + 24) = 610
       expect(sourceBox.height).toBe(610)
@@ -109,6 +109,8 @@ test.describe('Story 2.4：空状态提示与双栏响应式布局', () => {
 
     for (const size of testSizes) {
       await page.setViewportSize(size)
+      // 等待 window resize 事件触发并更新 Vue 状态后再测量
+      await page.waitForTimeout(100)
 
       const sourcePane = page.locator('.source-pane')
       const previewPane = page.locator('.preview-pane')
@@ -120,7 +122,8 @@ test.describe('Story 2.4：空状态提示与双栏响应式布局', () => {
       expect(previewBox).not.toBeNull()
 
       if (sourceBox && previewBox) {
-        expect(Math.abs(sourceBox.width - previewBox.width)).toBeLessThanOrEqual(1)
+        // Story 5.1 加入 4px 可拖动 splitter，允许存在 splitter 宽度误差
+        expect(Math.abs(sourceBox.width - previewBox.width)).toBeLessThanOrEqual(5)
         expect(sourceBox.height).toBe(previewBox.height)
         expect(sourceBox.height).toBe(size.height - (38 + 28 + 24))
       }
@@ -129,9 +132,10 @@ test.describe('Story 2.4：空状态提示与双栏响应式布局', () => {
 
   // TID: S2.4-E2E-006
   // Priority: P2
-  // AC: 不存在允许拖拽改变双栏比例的手柄。
-  test('双栏之间不应存在可拖拽修改比例的手柄', async ({ page }) => {
-    const resizer = page.locator('.resizer, .splitpane, [role="separator"]')
-    await expect(resizer).toHaveCount(0)
+  // AC: 双栏之间存在 Story 5.1 引入的可拖动 splitter（更新：原 2.4 固定 1:1 锁死约束已由 Story 5.1 替代）。
+  test('双栏之间应存在可拖拽修改比例的分隔线', async ({ page }) => {
+    const resizer = page.locator('[role="separator"]')
+    await expect(resizer).toHaveCount(1)
+    await expect(resizer).toHaveCSS('cursor', 'col-resize')
   })
 })

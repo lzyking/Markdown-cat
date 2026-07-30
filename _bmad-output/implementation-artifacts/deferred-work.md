@@ -89,3 +89,18 @@ severity: low
 reason: 对危险协议的 `stopPropagation` 在当前组件树中无实际效果（无父级响应），属于防御性冗余代码。不影响功能。
 status: resolved
 resolution: 2026-07-23，重构 PreviewPane.vue 中的 onPreviewClick 函数，统一所有 <a> 标签的 preventDefault，移除了冗余的 stopPropagation 及 dangerousProtocols 分支。
+
+## DW-11: Story 5.1 Splitter 缺少键盘与触屏交互
+
+origin: code review of 5-1-resizable-splitter-component.md, 2026-07-30
+location: src/App.vue
+severity: medium
+reason: 当前 splitter 仅通过鼠标事件 `@mousedown`/`window.mousemove`/`window.mouseup` 实现拖拽，桌面端 MVP 满足 AC。后续若支持触屏设备或无障碍键盘操作，需补充 `@touchstart`/`@touchmove`/`@touchend` 及键盘 ArrowLeft/ArrowRight/Home/End 处理。
+status: open
+
+## DW-12: Story 5.1 Splitter 缺少 ARIA 值语义
+
+origin: code review of 5-1-resizable-splitter-component.md, 2026-07-30
+location: src/App.vue:410-417
+severity: medium
+reason: splitter 已设置 `role="separator"` 与 `aria-label`，但缺少 `aria-valuenow`/`aria-valuemin`/`aria-valuemax`，屏幕阅读器无法感知当前分栏比例。建议在补充键盘支持时一并添加。

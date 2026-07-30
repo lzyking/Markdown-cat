@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { open, save } from '@tauri-apps/plugin-dialog'
 import TitleBar from './components/TitleBar.vue'
@@ -16,6 +16,16 @@ const filename = ref('New_*.md')
 const content = ref('')
 const cursorPosition = ref<CursorPosition>({ line: 1, column: 1 })
 const sourceEditorRef = ref<any>(null)
+
+// 可拖动分栏
+const containerRef = ref<HTMLElement | null>(null)
+const splitterRef = ref<HTMLElement | null>(null)
+const leftWidth = ref<number>(0)
+let isDragging = false
+let isManuallyResized = false
+let rafId: number | null = null
+let pendingWidth = 0
+let dragContainerRect: DOMRect | null = null
 
 // 斜杠快捷插入菜单状态
 const isSlashMenuOpen = ref(false)
@@ -213,6 +223,89 @@ function onSlashSelect(item: SlashMenuItem) {
   isSlashMenuOpen.value = false
 }
 
+const SPLITTER_WIDTH = 4
+
+function clampLeftWidth(newWidth: number, containerWidth: number): number {
+  return Math.max(200, Math.min(newWidth, containerWidth - 200))
+}
+
+function applyPendingWidth() {
+  leftWidth.value = pendingWidth
+  rafId = null
+}
+
+function scheduleWidthUpdate(width: number) {
+  pendingWidth = width
+  if (rafId === null) {
+    rafId = requestAnimationFrame(applyPendingWidth)
+  }
+}
+
+function stopDragging() {
+  isDragging = false
+  dragContainerRect = null
+  if (rafId !== null) {
+    cancelAnimationFrame(rafId)
+    rafId = null
+  }
+  document.body.style.userSelect = ''
+  window.removeEventListener('mousemove', onWindowMouseMove)
+  window.removeEventListener('mouseup', onWindowMouseUp)
+}
+
+function onWindowMouseMove(e: MouseEvent) {
+  if (!isDragging || !dragContainerRect) return
+  const rawWidth = e.clientX - dragContainerRect.left
+  const clamped = clampLeftWidth(rawWidth, dragContainerRect.width)
+  scheduleWidthUpdate(clamped)
+}
+
+function onWindowMouseUp() {
+  if (rafId !== null) {
+    cancelAnimationFrame(rafId)
+    leftWidth.value = pendingWidth
+    rafId = null
+  }
+  stopDragging()
+}
+
+function onSplitterMouseDown(e: MouseEvent) {
+  e.preventDefault()
+  if (!containerRef.value) return
+  isDragging = true
+  isManuallyResized = true
+  document.body.style.userSelect = 'none'
+  dragContainerRect = containerRef.value.getBoundingClientRect()
+  pendingWidth = clampLeftWidth(e.clientX - dragContainerRect.left, dragContainerRect.width)
+  scheduleWidthUpdate(pendingWidth)
+  window.addEventListener('mousemove', onWindowMouseMove)
+  window.addEventListener('mouseup', onWindowMouseUp)
+}
+
+function resetWidths() {
+  if (!containerRef.value) return
+  isManuallyResized = false
+  const containerWidth = containerRef.value.getBoundingClientRect().width
+  // 平分去除 splitter 后的可用宽度，使左右两栏内容区相等
+  leftWidth.value = clampLeftWidth(
+    (containerWidth - SPLITTER_WIDTH) / 2,
+    containerWidth,
+  )
+}
+
+function onWindowResize() {
+  if (!containerRef.value) return
+  const containerWidth = containerRef.value.getBoundingClientRect().width
+  if (!isManuallyResized) {
+    leftWidth.value = clampLeftWidth(
+      (containerWidth - SPLITTER_WIDTH) / 2,
+      containerWidth,
+    )
+  } else {
+    leftWidth.value = clampLeftWidth(leftWidth.value, containerWidth)
+  }
+}
+
 onMounted(async () => {
   try {
     const configRes = await invoke<CmdResult<{ savePath: string | null; lastOpenedFile: string | null }>>('get_config')
@@ -258,9 +351,23 @@ onMounted(async () => {
       saveStatus.value = 'unsaved'
       saveMessage.value = '已回退到默认保存路径'
     }
+
+    resetWidths()
+    window.addEventListener('resize', onWindowResize)
   } catch (e) {
     console.error('Failed on mounted initialization:', e)
   }
+})
+
+onUnmounted(() => {
+  window.removeEventListener('resize', onWindowResize)
+  if (rafId !== null) {
+    cancelAnimationFrame(rafId)
+    rafId = null
+  }
+  window.removeEventListener('mousemove', onWindowMouseMove)
+  window.removeEventListener('mouseup', onWindowMouseUp)
+  document.body.style.userSelect = ''
 })
 
 function onCursorPositionUpdate(pos: CursorPosition) {
@@ -296,8 +403,12 @@ if ((window as any).__TAURI_MOCK__) {
       @save-as-file="handleSaveAsFile"
       @open-settings="isSettingsOpen = true"
     />
-    <main class="editor-workspace">
-      <section class="editor-pane source-pane" aria-label="源码编辑器">
+    <main ref="containerRef" class="editor-workspace">
+      <section
+        class="editor-pane source-pane"
+        aria-label="源码编辑器"
+        :style="{ width: leftWidth > 0 ? `${leftWidth}px` : `calc(50% - ${SPLITTER_WIDTH / 2}px)` }"
+      >
         <SourceEditor
           ref="sourceEditorRef"
           v-model="content"
@@ -305,7 +416,18 @@ if ((window as any).__TAURI_MOCK__) {
           @slash-trigger="onSlashTrigger"
         />
       </section>
-      <section class="editor-pane preview-pane">
+      <div
+        ref="splitterRef"
+        class="editor-splitter"
+        role="separator"
+        aria-label="调整编辑栏与预览栏宽度"
+        @mousedown="onSplitterMouseDown"
+        @dblclick="resetWidths"
+      />
+      <section
+        class="editor-pane preview-pane"
+        :style="{ width: leftWidth > 0 ? `calc(100% - ${leftWidth}px - ${SPLITTER_WIDTH}px)` : `calc(50% - ${SPLITTER_WIDTH / 2}px)` }"
+      >
         <PreviewPane :content="content" />
       </section>
     </main>
@@ -351,7 +473,8 @@ if ((window as any).__TAURI_MOCK__) {
 }
 
 .editor-pane {
-  flex: 1 1 50%;
+  flex: 0 0 auto;
+  width: 50%;
   min-width: 0;
   display: flex;
   flex-direction: column;
@@ -360,10 +483,24 @@ if ((window as any).__TAURI_MOCK__) {
 
 .source-pane {
   background: var(--color-background);
-  border-right: 1px solid var(--color-border);
 }
 
 .preview-pane {
   background: var(--color-background-surface);
+}
+
+.editor-splitter {
+  /* 宽度需与 script 中 SPLITTER_WIDTH 常量保持一致 */
+  flex: 0 0 auto;
+  width: 4px;
+  background: var(--color-border);
+  cursor: col-resize;
+  user-select: none;
+  touch-action: none;
+  z-index: 10;
+}
+
+.editor-splitter:hover {
+  background: var(--color-accent);
 }
 </style>
