@@ -4,6 +4,7 @@ title: Resizable Splitter Component between Editor and Preview
 epic: epic-5
 status: done
 followup_review_recommended: false
+final_revision: e3ad5699c79a8d7af1790f119b56c83501604138
 baseline_revision: 1671f72d725ec6d44066b4ea36869751cf1a3a04
 ---
 
@@ -40,6 +41,24 @@ baseline_revision: 1671f72d725ec6d44066b4ea36869751cf1a3a04
 - 修改：`src/App.vue`（添加 splitter 状态、拖拽/双击/resize 逻辑、样式）。
 - 修改：`e2e/story-2-4.spec.ts`（调整 1:1 容差、将「无手柄」断言改为「存在 separator」断言）。
 - 新增：`e2e/story-5-1.spec.ts`（5 个 E2E 用例覆盖 splitter 全部 AC）。
+
+## Auto Run Result
+
+Status: done
+Summary: 在 `src/App.vue` 的源码编辑器与预览栏之间实现了可拖动垂直 Splitter，支持全局鼠标拖拽、200px 最小宽度约束、双击重置 50%/50%、requestAnimationFrame 流畅更新，并补充/更新了 E2E 测试。
+Files changed:
+- `src/App.vue`: 新增 splitter 状态、拖拽/双击/resize 逻辑与样式。
+- `e2e/story-2-4.spec.ts`: 调整 1:1 容差、将「无手柄」断言改为「存在 separator」断言。
+- `e2e/story-5-1.spec.ts`: 新增 5 个 E2E 用例覆盖 splitter 全部 AC。
+- `_bmad-output/implementation-artifacts/deferred-work.md`: 记录键盘/触屏/ARIA 语义延后项。
+Review findings:
+- 已修复 patch: resetWidths 未扣除 splitter 宽度、初始布局可能溢出、mousemove 中重复 getBoundingClientRect、卸载时未恢复 userSelect。
+- 已推迟 defer: 键盘/触屏交互与 ARIA 值语义（MVP 未在 AC 中要求）。
+Follow-up review recommended: false
+Verification:
+- `npm run build` — ✅ 通过。
+- `npx playwright test` — ✅ 75/75 通过。
+Residual risks: 无。延后项已记录在 deferred-work.md。
 
 ## Review Triage Log
 
