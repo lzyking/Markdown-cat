@@ -1,13 +1,105 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { renderMarkdown } from '../lib/markdown'
 
 const props = defineProps<{
   content: string
 }>()
 
-const html = computed(() => renderMarkdown(props.content))
+type PreviewLayout = 'compact' | 'regular' | 'wide'
+
+const previewPaneRef = ref<HTMLElement | null>(null)
+const containerWidth = ref(0)
+const responsiveLayout = ref<PreviewLayout>('wide')
+
+let resizeObserver: ResizeObserver | null = null
+let resizeRafId: number | null = null
+let pendingObservedWidth = 0
+
+function decorateRenderedHtml(rawHtml: string): string {
+  if (!rawHtml) {
+    return ''
+  }
+
+  const parser = new DOMParser()
+  const doc = parser.parseFromString(`<div id="preview-root">${rawHtml}</div>`, 'text/html')
+  const root = doc.getElementById('preview-root')
+
+  if (!root) {
+    return rawHtml
+  }
+
+  root.querySelectorAll('table').forEach((table) => {
+    if (table.parentElement?.classList.contains('preview-table-scroll')) {
+      return
+    }
+
+    if (!table.parentNode) {
+      return
+    }
+
+    const wrapper = doc.createElement('div')
+    wrapper.className = 'preview-table-scroll'
+    table.parentNode.insertBefore(wrapper, table)
+    wrapper.appendChild(table)
+  })
+
+  return root.innerHTML
+}
+
+function resolveResponsiveLayout(width: number): PreviewLayout {
+  if (width <= 420) {
+    return 'compact'
+  }
+
+  if (width <= 640) {
+    return 'regular'
+  }
+
+  return 'wide'
+}
+
+function applyResponsiveLayout(width: number) {
+  containerWidth.value = Math.max(0, Math.round(width))
+  responsiveLayout.value = resolveResponsiveLayout(width)
+}
+
+function scheduleResponsiveLayout(width: number) {
+  pendingObservedWidth = width
+
+  if (resizeRafId !== null) {
+    cancelAnimationFrame(resizeRafId)
+  }
+
+  resizeRafId = requestAnimationFrame(() => {
+    applyResponsiveLayout(pendingObservedWidth)
+    resizeRafId = null
+  })
+}
+
+const html = computed(() => decorateRenderedHtml(renderMarkdown(props.content)))
 const isEmpty = computed(() => !props.content || props.content.trim() === '')
+const responsiveStyle = computed<Record<string, string>>(() => {
+  const layoutStyles: Record<PreviewLayout, Record<string, string>> = {
+    compact: {
+      '--preview-body-font-size': '13px',
+      '--preview-heading-font-size': '16px',
+      '--preview-padding': '16px',
+    },
+    regular: {
+      '--preview-body-font-size': '13.5px',
+      '--preview-heading-font-size': '17px',
+      '--preview-padding': '18px',
+    },
+    wide: {
+      '--preview-body-font-size': '14px',
+      '--preview-heading-font-size': '18px',
+      '--preview-padding': '20px',
+    },
+  }
+
+  return layoutStyles[responsiveLayout.value]
+})
 
 // TODO: i18n — extract to locale key (e.g. 'preview.emptyState')
 const EMPTY_STATE_TEXT = '开始输入 Markdown，右侧将实时预览。'
@@ -21,14 +113,47 @@ function onPreviewClick(event: MouseEvent) {
 
   event.preventDefault()
 }
+
+onMounted(() => {
+  if (!previewPaneRef.value) {
+    return
+  }
+
+  applyResponsiveLayout(previewPaneRef.value.clientWidth)
+
+  resizeObserver = new ResizeObserver((entries) => {
+    const entry = entries[0]
+    if (!entry) {
+      return
+    }
+
+    scheduleResponsiveLayout(entry.contentRect.width)
+  })
+
+  resizeObserver.observe(previewPaneRef.value)
+})
+
+onUnmounted(() => {
+  resizeObserver?.disconnect()
+  resizeObserver = null
+
+  if (resizeRafId !== null) {
+    cancelAnimationFrame(resizeRafId)
+    resizeRafId = null
+  }
+})
 </script>
 
 <template>
   <div
+    ref="previewPaneRef"
     class="preview-pane-inner"
     aria-label="实时预览"
     role="region"
     aria-live="off"
+    :data-preview-layout="responsiveLayout"
+    :data-preview-width="containerWidth"
+    :style="responsiveStyle"
     @click="onPreviewClick"
   >
     <div v-if="isEmpty" class="empty-state">
@@ -40,18 +165,31 @@ function onPreviewClick(event: MouseEvent) {
 
 <style scoped>
 .preview-pane-inner {
+  --preview-body-font-size: var(--font-size-body);
+  --preview-heading-font-size: var(--font-size-heading);
+  --preview-padding: var(--spacing-xl);
   width: 100%;
   height: 100%;
-  overflow: auto;
+  min-width: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
   background: var(--color-background-surface);
   color: var(--color-text-primary);
   font-family: var(--font-body);
-  font-size: var(--font-size-body);
+  font-size: var(--preview-body-font-size);
   line-height: var(--line-height-relaxed);
-  padding: var(--spacing-xl);
+  padding: var(--preview-padding);
   user-select: text;
   word-break: break-word;
   overflow-wrap: anywhere;
+}
+
+.preview-content {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
 }
 
 .empty-state {
@@ -81,15 +219,15 @@ function onPreviewClick(event: MouseEvent) {
 }
 
 .preview-content :deep(h1) {
-  font-size: var(--font-size-heading);
+  font-size: var(--preview-heading-font-size);
 }
 
 .preview-content :deep(h2) {
-  font-size: calc(var(--font-size-heading) - 1px);
+  font-size: calc(var(--preview-heading-font-size) - 1px);
 }
 
 .preview-content :deep(h3) {
-  font-size: calc(var(--font-size-heading) - 2px);
+  font-size: calc(var(--preview-heading-font-size) - 2px);
   border-bottom: none;
 }
 
@@ -116,16 +254,24 @@ function onPreviewClick(event: MouseEvent) {
 }
 
 .preview-content :deep(pre) {
+  display: block;
+  max-width: 100%;
+  min-width: 0;
   background: var(--color-code-background);
   border-radius: var(--rounded-md);
   padding: var(--spacing-md);
-  overflow: auto;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border) transparent;
   margin: var(--spacing-md) 0;
 }
 
 .preview-content :deep(code) {
   font-family: var(--font-body-mono);
-  font-size: var(--font-size-body);
+  font-size: var(--preview-body-font-size);
   background: var(--color-code-background);
   border-radius: var(--rounded-sm);
   /* DESIGN.md 指定行内代码内边距为 2px 5px，无匹配 spacing token（最小 --spacing-xs = 4px） */
@@ -170,11 +316,29 @@ function onPreviewClick(event: MouseEvent) {
   color: var(--color-text-primary);
 }
 
-.preview-content :deep(table) {
+.preview-content :deep(img) {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+.preview-content :deep(.preview-table-scroll) {
   width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border) transparent;
+}
+
+.preview-content :deep(table) {
+  width: max-content;
+  min-width: 100%;
   border-collapse: collapse;
   margin: var(--spacing-md) 0;
-  font-size: var(--font-size-body);
+  font-size: var(--preview-body-font-size);
 }
 
 .preview-content :deep(th),
@@ -191,5 +355,27 @@ function onPreviewClick(event: MouseEvent) {
 
 .preview-content :deep(tr:nth-child(even)) {
   background: rgba(255, 255, 255, 0.02);
+}
+
+.preview-content :deep(pre::-webkit-scrollbar),
+.preview-content :deep(.preview-table-scroll::-webkit-scrollbar) {
+  width: 6px;
+  height: 6px;
+}
+
+.preview-content :deep(pre::-webkit-scrollbar-track),
+.preview-content :deep(.preview-table-scroll::-webkit-scrollbar-track) {
+  background: transparent;
+}
+
+.preview-content :deep(pre::-webkit-scrollbar-thumb),
+.preview-content :deep(.preview-table-scroll::-webkit-scrollbar-thumb) {
+  background: var(--color-border);
+  border-radius: var(--rounded-full);
+}
+
+.preview-content :deep(pre::-webkit-scrollbar-thumb:hover),
+.preview-content :deep(.preview-table-scroll::-webkit-scrollbar-thumb:hover) {
+  background: var(--color-text-muted);
 }
 </style>

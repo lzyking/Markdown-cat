@@ -104,3 +104,11 @@ origin: code review of 5-1-resizable-splitter-component.md, 2026-07-30
 location: src/App.vue:410-417
 severity: medium
 reason: splitter 已设置 `role="separator"` 与 `aria-label`，但缺少 `aria-valuenow`/`aria-valuemin`/`aria-valuemax`，屏幕阅读器无法感知当前分栏比例。建议在补充键盘支持时一并添加。
+status: open
+
+- source_spec: `_bmad-output/implementation-artifacts/5-2-responsive-preview-auto-adapter.md`
+  summary: e2e story-5-2 测试用例假设默认分栏比例与固定像素拖拽目标（如 860/880/900px）能产生 regular/compact/wide 断点，未来若默认分栏比例或断点阈值调整，测试会脆弱失败。
+  evidence: `e2e/story-5-2.spec.ts` 的 `dragSplitterTo` 调用与 `data-preview-layout` 初始值断言直接耦合当前 1100x700 视口下的默认 50/50 分栏与 420/640px 断点常量。
+- source_spec: `_bmad-output/implementation-artifacts/5-2-responsive-preview-auto-adapter.md`
+  summary: PreviewPane 响应式断点下的字号（13px/13.5px/14px）以硬编码 CSS 变量覆盖形式实现，未接入项目既有的设计 token 体系。
+  evidence: `src/components/PreviewPane.vue` 的 `responsiveStyle` computed 中三档字号为字面量，未引用 `DESIGN.md`/`--font-size-*` token，后续设计系统扩展断点字号时需要手动同步维护。
