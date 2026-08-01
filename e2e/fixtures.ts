@@ -61,6 +61,7 @@ async function injectMocks(page: Page) {
         }
       },
       copy_asset_file: () => ({ ok: true, data: { migrated: true } }),
+      pdf_export_supported: () => true,
       read_image_asset: () => ({
         ok: true,
         data: {

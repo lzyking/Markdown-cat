@@ -57,6 +57,7 @@ interface ExportProgressState {
   message: string
   warnings: ExportImageWarning[]
 }
+type ExportKind = 'HTML' | 'PDF'
 
 const saveStatus = ref<SaveStatus>('unsaved')
 const saveMessage = ref('')
@@ -67,6 +68,13 @@ const exportProgress = ref<ExportProgressState>({
   message: '',
   warnings: [],
 })
+const activeExportKind = ref<ExportKind>('HTML')
+// Once the native PDF render (a single `invoke('export_pdf', ...)` call) has
+// started, there is no way to abort it: the JS-side AbortController only ever
+// covers the HTML-inlining phase, and Tauri gives no mechanism to cancel a
+// command already in flight. Rather than let the cancel button appear to work
+// while silently doing nothing, hide it once that phase begins.
+const exportCancelable = ref(true)
 
 const statusBarStatus = computed(() =>
   saveStatus.value === 'unsaved' ? 'normal' : saveStatus.value
@@ -91,6 +99,19 @@ function formatSaveError(rawError?: string): string {
   return `保存失败：${rawError}`
 }
 
+function formatPdfExportError(rawError?: string): string {
+  if (!rawError) return '导出 PDF 失败：未知错误'
+  if (rawError.startsWith('ERR_PDF_EXPORT_UNSUPPORTED_PLATFORM')) return '导出 PDF 失败：当前平台暂不支持 PDF 导出'
+  if (rawError.startsWith('ERR_PDF_EXPORT_LOAD_TIMEOUT')) return '导出 PDF 失败：内容加载超时，请重试'
+  if (rawError.startsWith('ERR_PDF_EXPORT_RENDER_TIMEOUT')) return '导出 PDF 失败：PDF 渲染超时，请重试'
+  if (rawError.startsWith('ERR_SAVE_FAILED')) return '导出 PDF 失败：文件写入失败'
+  if (/permission/i.test(rawError)) return '导出 PDF 失败：权限不足'
+  if (/space/i.test(rawError)) return '导出 PDF 失败：磁盘空间不足'
+  if (rawError.startsWith('ERR_PDF_EXPORT_')) return '导出 PDF 失败：PDF 生成失败，请重试'
+  if (rawError.startsWith('导出 PDF 失败：')) return rawError
+  return `导出 PDF 失败：${rawError}`
+}
+
 const currentFilePath = ref<string | null>(null)
 const documentBaseDir = computed(() => getParentDirectory(currentFilePath.value) ?? currentSavePath.value ?? null)
 
@@ -102,6 +123,7 @@ function resetExportProgress() {
     message: '',
     warnings: [],
   }
+  exportCancelable.value = true
 }
 
 function updateExportProgress(next: Partial<ExportProgressState>) {
@@ -111,7 +133,7 @@ function updateExportProgress(next: Partial<ExportProgressState>) {
   }
 }
 
-function cancelHtmlExport() {
+function cancelExport() {
   exportAbortController?.abort()
 }
 
@@ -128,6 +150,20 @@ function deriveHtmlExportFilename(sourceFilename: string): string {
 
 function deriveHtmlExportDefaultPath(): string {
   const exportFilename = deriveHtmlExportFilename(filename.value)
+  const baseDir = getParentDirectory(currentFilePath.value) ?? currentSavePath.value
+  return baseDir ? joinFilePath(baseDir, exportFilename) : exportFilename
+}
+
+function derivePdfExportFilename(sourceFilename: string): string {
+  const trimmedFilename = sourceFilename.trim() || 'Untitled.md'
+  if (/\.(md|markdown|txt)$/i.test(trimmedFilename)) {
+    return trimmedFilename.replace(/\.(md|markdown|txt)$/i, '.pdf')
+  }
+  return `${trimmedFilename}.pdf`
+}
+
+function derivePdfExportDefaultPath(): string {
+  const exportFilename = derivePdfExportFilename(filename.value)
   const baseDir = getParentDirectory(currentFilePath.value) ?? currentSavePath.value
   return baseDir ? joinFilePath(baseDir, exportFilename) : exportFilename
 }
@@ -162,6 +198,7 @@ async function handleExportHtml() {
 
     const renderResult = renderMarkdown(content.value)
     exportAbortController = new AbortController()
+    activeExportKind.value = 'HTML'
     exportProgress.value = {
       active: true,
       current: 0,
@@ -207,6 +244,82 @@ async function handleExportHtml() {
       saveStatus.value = 'failure'
       saveMessage.value = `导出 HTML 失败：${err?.message || err}`
       console.error('Export HTML error:', err)
+    }
+  } finally {
+    exportAbortController = null
+    resetExportProgress()
+  }
+}
+
+async function handleExportPdf() {
+  try {
+    const isSupported = await invoke<boolean>('pdf_export_supported')
+    if (!isSupported) {
+      saveStatus.value = 'failure'
+      saveMessage.value = formatPdfExportError('ERR_PDF_EXPORT_UNSUPPORTED_PLATFORM')
+      return
+    }
+
+    const target = await saveDialog({
+      defaultPath: derivePdfExportDefaultPath(),
+      filters: [{ name: 'PDF', extensions: ['pdf'] }],
+    })
+
+    if (!target || typeof target !== 'string') {
+      return
+    }
+
+    const renderResult = renderMarkdown(content.value)
+    exportAbortController = new AbortController()
+    activeExportKind.value = 'PDF'
+    exportProgress.value = {
+      active: true,
+      current: 0,
+      total: 0,
+      message: '正在准备导出内容…',
+      warnings: [],
+    }
+
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+
+    const exported = await exportSelfContainedHtml({
+      markdownHtml: renderResult.html,
+      title: derivePdfExportFilename(filename.value),
+      themeId: activeThemeId.value,
+      previewWidth: getPreviewExportWidth(),
+      documentBaseDir: documentBaseDir.value,
+      readLocalImage: async (absolutePath) => readLocalImageForExport(absolutePath),
+      signal: exportAbortController.signal,
+      onProgress: (progress) => {
+        updateExportProgress(progress)
+      },
+    })
+
+    updateExportProgress({ message: '正在生成 PDF…' })
+    exportCancelable.value = false
+
+    const saveResult = await invoke<CmdResult<SaveResult>>('export_pdf', {
+      html: exported.html,
+      savePath: target,
+    })
+
+    if (!saveResult.ok || !saveResult.data) {
+      saveStatus.value = 'failure'
+      saveMessage.value = formatPdfExportError(saveResult.error)
+      return
+    }
+
+    const warningSummary = exported.warnings.length > 0 ? `（${exported.warnings.length} 个警告）` : ''
+    saveStatus.value = 'success'
+    saveMessage.value = `已导出 PDF：${saveResult.data.path}${warningSummary}`
+  } catch (err: any) {
+    if (isHtmlExportCancelledError(err) || exportAbortController?.signal.aborted) {
+      saveStatus.value = 'failure'
+      saveMessage.value = 'PDF 导出已取消'
+    } else {
+      saveStatus.value = 'failure'
+      saveMessage.value = `导出 PDF 失败：${err?.message || err}`
+      console.error('Export PDF error:', err)
     }
   } finally {
     exportAbortController = null
@@ -728,6 +841,7 @@ if ((window as any).__TAURI_MOCK__) {
       @open-file="handleOpenFile"
       @save-as-file="handleSaveAsFile"
       @export-html="handleExportHtml"
+      @export-pdf="handleExportPdf"
       @open-settings="isSettingsOpen = true"
       @select-theme="handleThemeSelect"
     />
@@ -772,9 +886,15 @@ if ((window as any).__TAURI_MOCK__) {
       :status="statusBarStatus"
     />
 
-    <div v-if="exportProgress.active" class="export-progress-overlay" role="dialog" aria-modal="true" aria-label="导出 HTML 进度">
+    <div
+      v-if="exportProgress.active"
+      class="export-progress-overlay"
+      role="dialog"
+      aria-modal="true"
+      :aria-label="`导出 ${activeExportKind} 进度`"
+    >
       <div class="export-progress-modal">
-        <div class="export-progress-title">正在导出 HTML</div>
+        <div class="export-progress-title">正在导出 {{ activeExportKind }}</div>
         <div class="export-progress-message">{{ exportProgress.message }}</div>
         <div class="export-progress-bar">
           <div class="export-progress-bar-fill" :style="{ width: `${exportProgressPercent}%` }" />
@@ -792,8 +912,8 @@ if ((window as any).__TAURI_MOCK__) {
             {{ warning.message }}
           </div>
         </div>
-        <div class="export-progress-actions">
-          <button type="button" class="export-progress-button" @click="cancelHtmlExport">取消导出</button>
+        <div v-if="exportCancelable" class="export-progress-actions">
+          <button type="button" class="export-progress-button" @click="cancelExport">取消导出</button>
         </div>
       </div>
     </div>

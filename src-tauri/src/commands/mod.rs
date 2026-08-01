@@ -41,6 +41,7 @@ impl CmdResult<()> {
 
 pub mod config;
 pub mod doc;
+pub mod pdf_export;
 
 /// 后端命令注册入口。
 #[tauri::command]

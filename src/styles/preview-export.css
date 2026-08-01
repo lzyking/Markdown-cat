@@ -205,3 +205,48 @@
 .preview-content .preview-table-scroll::-webkit-scrollbar-thumb:hover {
   background: var(--color-text-muted);
 }
+
+@media print {
+  @page {
+    margin: 12mm;
+  }
+
+  /* Without this, WebKit's print/PDF renderer drops non-text background
+     styling (theme surface color, code-block fills, table zebra striping),
+     defeating the "preserve exact preview styles" goal of this feature. */
+  * {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  .preview-content table,
+  .preview-content pre,
+  .preview-content code,
+  .preview-content img,
+  .preview-content .preview-table-scroll {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  /* `pre`/`.preview-table-scroll` rely on `overflow-x: auto` + a scrollbar for
+     wide content on screen, but print/PDF has no scrollbar: any content wider
+     than the container was silently clipped at the page margin instead of
+     wrapping, which is exactly the truncation AC2 requires avoiding. Let wide
+     code lines wrap and let tables shrink to the printable width instead. */
+  .preview-content pre {
+    overflow-x: visible;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  .preview-content .preview-table-scroll {
+    overflow-x: visible;
+  }
+
+  .preview-content table {
+    width: 100%;
+    min-width: 0;
+    table-layout: fixed;
+    word-break: break-word;
+  }
+}

@@ -31,3 +31,10 @@ base64 = "0.22"
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
+
+[target.'cfg(target_os = "macos")'.dependencies]
+block2 = "0.6.2"
+objc2 = "0.6.4"
+objc2-app-kit = "0.3.2"
+objc2-foundation = { version = "0.3.2", features = ["NSData", "NSError", "NSString", "NSURL"] }
+objc2-web-kit = { version = "0.3.2", features = ["WKNavigation", "WKPDFConfiguration", "WKWebView", "block2"] }

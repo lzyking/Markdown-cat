@@ -85,7 +85,7 @@ development_status:
   epic-7-retrospective: optional
   epic-8: in-progress
   8-1-export-self-contained-html: done
-  8-2-export-pdf-with-exact-styles: ready-for-dev
+  8-2-export-pdf-with-exact-styles: done
   epic-8-retrospective: optional
   epic-9: in-progress
   9-1-confluence-config-setting-dialog: ready-for-dev

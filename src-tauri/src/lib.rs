@@ -22,7 +22,9 @@ pub fn run() {
             commands::doc::save_document,
             commands::doc::save_document_as,
             commands::doc::save_image_asset,
-            commands::doc::copy_asset_file
+            commands::doc::copy_asset_file,
+            commands::pdf_export::export_pdf,
+            commands::pdf_export::pdf_export_supported
         ])
         .setup(|_app| {
             #[cfg(debug_assertions)]

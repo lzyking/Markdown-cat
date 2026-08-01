@@ -201,3 +201,35 @@ status: open
 - source_spec: `_bmad-output/implementation-artifacts/8-1-export-self-contained-html.md`
   summary: HTML 导出复用 `save_document_as` 命令写入导出文件，该命令写入成功后会顺带放宽导出目标目录的 `asset://` 协议可访问范围，而导出的独立 HTML 文件本身并不依赖该协议渲染图片，属于非预期的权限面扩大副作用。
   evidence: `src-tauri/src/commands/doc.rs` 的 `save_document_as` 在写入成功后无条件调用 `app_handle.asset_protocol_scope().allow_directory(parent, true)`；`handleExportHtml()`（`src/App.vue`）为写出导出的 HTML 复用了这一命令，导致用户选择的任意导出目录都会被动加入 asset 协议白名单，即使该目录内没有、也不需要通过 `asset://` 访问的图片资源，扩大了运行时文件访问面且未在 AC 中被要求。
+
+### DW-14: PDF 导出（Story 8.2）仅实现 macOS 原生渲染，Windows/Linux 未实现
+
+origin: dev of 8-2-export-pdf-with-exact-styles, 2026-08-01
+location: src-tauri/src/commands/pdf_export.rs
+severity: medium
+reason: "Export as PDF..." 的原生 PDF 生成通过 macOS 专属的 WKWebView `createPDFWithConfiguration:completionHandler:` + `loadFileURL:allowingReadAccessToURL:` 实现，并在本沙盒环境中通过独立示例程序实测生成了有效 PDF（含真实渲染的表格/代码块内容）。Windows（WebView2 `PrintToPdf`）与 Linux（webkit2gtk）分别需要不同的原生 API，且本沙盒仅安装了 `aarch64-apple-darwin` target，无法交叉编译或运行验证，因此这两个平台当前直接返回 `ERR_PDF_EXPORT_UNSUPPORTED_PLATFORM: 当前平台暂不支持 PDF 导出`。这是工程能力缺口（而非需要人工操作的外部依赖），应作为独立故事补齐 Windows/Linux 原生 PDF 渲染，并在对应平台上实际构建验证后再关闭。
+status: open
+
+### DW-15: PDF 渲染在 `on_page_load` Finished 事件后立即调用 `createPDFWithConfiguration`，未额外等待布局稳定
+
+origin: review (Blind Hunter) of 8-2-export-pdf-with-exact-styles, 2026-08-01
+location: src-tauri/src/commands/pdf_export.rs (export_pdf_macos)
+severity: low
+reason: WKWebView 的 `Finished` 事件在文档与资源加载完成后触发，本轮针对含标题/表格/代码块的示例文档做了两次真实 PDF 生成验证，输出内容正确、字体真实渲染，未观察到布局未稳定的问题。但对更复杂/大型文档（如包含大量内联 base64 图片或深层嵌套内容触发额外异步重排的场景）是否总能在该事件后立即达到最终稳定布局，本轮未做压力测试验证，理论上仍存在极端情况下过早截图的风险，故记录以待后续更充分的真实场景测试。
+status: open
+
+### DW-16: Story 8.2 的 e2e 测试仅覆盖前端到 `export_pdf` 命令调用边界，未覆盖失败/超时/取消/不支持平台等分支，也未在真实打包应用中通过原生 WebKit 路径验证
+
+origin: review (Blind Hunter) of 8-2-export-pdf-with-exact-styles, 2026-08-01
+location: e2e/story-8-2.spec.ts; src-tauri/src/commands/pdf_export.rs
+severity: medium
+reason: 与仓库中其他 story（如 8-1）一致，`e2e/story-8-2.spec.ts` 通过 mock `window.__TAURI_MOCK__.invoke` 来验证前端到 IPC 边界的行为，无法在 Playwright 浏览器环境中驱动真实的 Rust/WKWebView 原生渲染路径，也未新增覆盖 `export_pdf` 失败、`ERR_PDF_EXPORT_LOAD_TIMEOUT`/`ERR_PDF_EXPORT_RENDER_TIMEOUT`、用户取消、以及非 macOS 平台快速失败等分支的测试用例。本轮开发通过一次性独立 `cargo run --example` 冒烟测试脚本手动验证了成功路径的真实原生渲染（生成含真实字体的有效 PDF），但失败/超时/取消分支仍只有代码走查、未经自动化或人工验证，建议后续设计专门的原生集成测试或桌面自动化测试来补齐。
+status: open
+
+### DW-17: 内联失败的本地图片在导出目录与文档目录不同时会引用错误的相对路径
+
+origin: review (Blind Hunter / Edge Case Hunter) of 8-2-export-pdf-with-exact-styles, 2026-08-01
+location: src/lib/export-html.ts (exportSelfContainedHtml); src-tauri/src/commands/pdf_export.rs (dispatch_load_file_url)
+severity: high
+reason: 当本地图片因体积超过 10MB（`LOCAL_IMAGE_EMBED_LIMIT_BYTES`）或路径无法解析而未被内嵌为 base64 时，`exportSelfContainedHtml` 会保留原始相对 `src` 并仅附加一条警告（`src/lib/export-html.ts` 约第 268-278 行）。无论是 HTML 导出（`save_document_as` 写入用户选择的任意目标目录）还是 PDF 导出（`pdf_export.rs` 将自包含 HTML 写入以导出目标路径的父目录为基准的临时文件），后续相对路径解析都以导出目标目录、而非原始文档所在目录（`documentBaseDir`）为基准，一旦两者不同，这些未内嵌的图片在导出产物中会直接失效/无法显示。该缺口源自 8-1 引入的 `exportSelfContainedHtml`/`documentBaseDir` 设计，并非 8-2 新增，但本轮针对 PDF 导出 diff 的评审重新验证并确认其依然存在，故记录以待后续统一修复（例如导出前将超限图片也内嵌，或在导出产物中改写为绝对路径/文档目录相对路径）。
+status: open

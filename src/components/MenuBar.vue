@@ -9,6 +9,7 @@ const emit = defineEmits<{
   (e: 'open-file'): void
   (e: 'save-as-file'): void
   (e: 'export-html'): void
+  (e: 'export-pdf'): void
   (e: 'open-settings'): void
   (e: 'select-theme', themeId: string): void
 }>()
@@ -26,6 +27,10 @@ function saveAsFile() {
 
 function exportHtml() {
   emit('export-html')
+}
+
+function exportPdf() {
+  emit('export-pdf')
 }
 
 function openSettings() {
@@ -51,6 +56,7 @@ function selectTheme(themeId: string) {
         <div class="menu-row" role="menuitem" @click="openFile">打开文件 (Open)…</div>
         <div class="menu-row" role="menuitem" @click="saveAsFile">另存为 (Save As)…</div>
         <div class="menu-row" role="menuitem" @click="exportHtml">导出为 HTML (Export as HTML)…</div>
+        <div class="menu-row" role="menuitem" @click="exportPdf">导出为 PDF (Export as PDF)…</div>
         <div class="menu-divider"></div>
         <div class="menu-row submenu-trigger" role="menuitem" aria-haspopup="true">
           <span>Theme</span>
