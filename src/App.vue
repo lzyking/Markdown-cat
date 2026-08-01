@@ -12,7 +12,14 @@ import SlashMenu, { type SlashMenuItem } from './components/SlashMenu.vue'
 import type { CursorPosition } from './components/SourceEditor.vue'
 import { applyTheme, getActiveThemeId } from './lib/theme'
 import { getResolvedThemeId } from './lib/themes'
-import type { AppConfig, DocumentState, CmdResult, SaveResult } from './lib/types'
+import {
+  extractAssetReferences,
+  extractSiblingImageReferences,
+  generateClipboardImageFilename,
+  getParentDirectory,
+  joinFilePath,
+} from './lib/image-assets'
+import type { AppConfig, ClipboardImagePayload, DocumentState, CmdResult, SaveResult } from './lib/types'
 
 const filename = ref('New_*.md')
 const content = ref('')
@@ -60,6 +67,7 @@ function formatSaveError(rawError?: string): string {
 }
 
 const currentFilePath = ref<string | null>(null)
+const documentBaseDir = computed(() => getParentDirectory(currentFilePath.value) ?? currentSavePath.value ?? null)
 
 function triggerDebouncedAutoSave(newContent: string) {
   if (autoSaveTimer !== null) {
@@ -188,6 +196,22 @@ async function handleSaveAsFile() {
     const defaultPath = currentSavePath.value
       ? `${currentSavePath.value}/${defaultName}`
       : defaultName
+    // Capture the pre-save state: if the document was never saved to disk,
+    // any pasted images were staged under `{defaultSaveDir}/assets/`. After
+    // "Save As" relocates the document, those images must be migrated to
+    // stay reachable via the `./assets/...` links already in the content.
+    const wasUnsaved = !currentFilePath.value
+    const priorAssetsDir = wasUnsaved && currentSavePath.value
+      ? joinFilePath(currentSavePath.value, 'assets')
+      : null
+    // Images pasted while the document was already saved to disk live
+    // directly beside the old document path (as "./img_....png"), not
+    // under an "assets/" staging subfolder. Capture that directory too so
+    // Save As can migrate them alongside the assets/ case above — without
+    // this, moving/renaming an already-saved document silently breaks
+    // every sibling image link in its content.
+    const priorDocDir = !wasUnsaved ? getParentDirectory(currentFilePath.value) : null
+
     const target = await save({
       defaultPath,
       filters: [{ name: 'Markdown Document', extensions: ['md', 'markdown', 'txt'] }],
@@ -205,6 +229,43 @@ async function handleSaveAsFile() {
         if (!(window as any).__TAURI_MOCK__) {
           await invoke('update_last_opened_file', { filePath: res.data.path })
         }
+
+        if (priorAssetsDir) {
+          const newDocDir = getParentDirectory(res.data.path)
+          const newAssetsDir = newDocDir ? joinFilePath(newDocDir, 'assets') : null
+          if (newAssetsDir && newAssetsDir !== priorAssetsDir) {
+            const referencedAssets = extractAssetReferences(content.value)
+            for (const assetFilename of referencedAssets) {
+              try {
+                await invoke('copy_asset_file', {
+                  fromDir: priorAssetsDir,
+                  toDir: newAssetsDir,
+                  filename: assetFilename,
+                })
+              } catch (migrationErr) {
+                console.error('Asset migration error:', migrationErr)
+              }
+            }
+          }
+        }
+
+        if (priorDocDir) {
+          const newDocDir = getParentDirectory(res.data.path)
+          if (newDocDir && newDocDir !== priorDocDir) {
+            const referencedSiblingImages = extractSiblingImageReferences(content.value)
+            for (const imageFilename of referencedSiblingImages) {
+              try {
+                await invoke('copy_asset_file', {
+                  fromDir: priorDocDir,
+                  toDir: newDocDir,
+                  filename: imageFilename,
+                })
+              } catch (migrationErr) {
+                console.error('Sibling image migration error:', migrationErr)
+              }
+            }
+          }
+        }
       } else {
         saveStatus.value = 'failure'
         saveMessage.value = `另存为失败：${res.error}`
@@ -214,6 +275,54 @@ async function handleSaveAsFile() {
     saveStatus.value = 'failure'
     saveMessage.value = `另存为调起对话框失败：${err?.message || err}`
     console.error('Save as file error:', err)
+  }
+}
+
+async function resolveFallbackImageDirectory(): Promise<string> {
+  if (currentSavePath.value) {
+    return joinFilePath(currentSavePath.value, 'assets')
+  }
+
+  const dirRes = await invoke<CmdResult<string>>('get_app_dir')
+  if (!dirRes.ok || !dirRes.data) {
+    throw new Error(dirRes.error || 'ERR_APP_DIR_NOT_WRITABLE')
+  }
+
+  currentSavePath.value = dirRes.data
+  return joinFilePath(dirRes.data, 'assets')
+}
+
+async function handleClipboardImagePaste(payload: ClipboardImagePayload) {
+  try {
+    const savedDocumentDir = getParentDirectory(currentFilePath.value)
+    const targetDir = savedDocumentDir ?? await resolveFallbackImageDirectory()
+    const filenameForAsset = generateClipboardImageFilename(payload.mimeType)
+    const saveRes = await invoke<CmdResult<SaveResult>>('save_image_asset', {
+      targetDir,
+      filename: filenameForAsset,
+      bytes: payload.bytes,
+    })
+
+    if (!saveRes.ok || !saveRes.data) {
+      saveStatus.value = 'failure'
+      saveMessage.value = formatSaveError(saveRes.error)
+      return
+    }
+
+    // Use the filename actually written by the backend: on a rare naming
+    // collision (e.g. very rapid consecutive pastes) it may differ from
+    // the name we requested.
+    const actualFilename = saveRes.data.filename
+    const relativeAssetPath = savedDocumentDir ? `./${actualFilename}` : `./assets/${actualFilename}`
+
+    sourceEditorRef.value?.insertText(`![Image](${relativeAssetPath})`)
+    saveStatus.value = 'success'
+    saveMessage.value = savedDocumentDir
+      ? `图片已保存至 ${actualFilename}`
+      : `图片已暂存至 assets/${actualFilename}`
+  } catch (err: any) {
+    saveStatus.value = 'failure'
+    saveMessage.value = formatSaveError(err?.message)
   }
 }
 
@@ -486,6 +595,7 @@ if ((window as any).__TAURI_MOCK__) {
           ref="sourceEditorRef"
           v-model="content"
           @cursor-change="onCursorPositionUpdate"
+          @image-paste="handleClipboardImagePaste"
           @slash-trigger="onSlashTrigger"
         />
       </section>
@@ -501,7 +611,11 @@ if ((window as any).__TAURI_MOCK__) {
         class="editor-pane preview-pane"
         :style="{ width: leftWidth > 0 ? `calc(100% - ${leftWidth}px - ${SPLITTER_WIDTH}px)` : `calc(50% - ${SPLITTER_WIDTH / 2}px)` }"
       >
-        <PreviewPane :content="content" @toggle-task="onToggleTask" />
+        <PreviewPane
+          :content="content"
+          :document-base-dir="documentBaseDir"
+          @toggle-task="onToggleTask"
+        />
       </section>
     </main>
     <StatusBar

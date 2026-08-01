@@ -1,9 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { convertFileSrc } from '@tauri-apps/api/core'
 import { renderMarkdown } from '../lib/markdown'
+import { isRelativeAssetPath, resolveRelativeAssetPath } from '../lib/image-assets'
 
 const props = defineProps<{
   content: string
+  documentBaseDir?: string | null
 }>()
 
 const emit = defineEmits<{
@@ -47,6 +50,18 @@ function decorateRenderedHtml(rawHtml: string): string {
     table.parentNode.insertBefore(wrapper, table)
     wrapper.appendChild(table)
   })
+
+  if (props.documentBaseDir) {
+    root.querySelectorAll('img').forEach((image) => {
+      const source = image.getAttribute('src')
+      if (!source || !isRelativeAssetPath(source)) {
+        return
+      }
+
+      const absolutePath = resolveRelativeAssetPath(props.documentBaseDir!, source)
+      image.setAttribute('src', convertFileSrc(absolutePath))
+    })
+  }
 
   return root.innerHTML
 }

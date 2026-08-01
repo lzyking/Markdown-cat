@@ -3,6 +3,8 @@ import { ref, onMounted, onUnmounted, watch } from 'vue'
 import { EditorView, keymap, placeholder } from '@codemirror/view'
 import { EditorState } from '@codemirror/state'
 import { standardKeymap, history, historyKeymap, undo, redo, selectAll } from '@codemirror/commands'
+import type { ClipboardImagePayload } from '../lib/types'
+import { isSupportedClipboardImageType } from '../lib/image-assets'
 
 export interface CursorPosition {
   line: number
@@ -17,36 +19,70 @@ const emit = defineEmits<{
   (e: 'update:modelValue', value: string): void
   (e: 'cursorChange', pos: CursorPosition): void
   (e: 'slashTrigger', position: { top: number; left: number }): void
+  (e: 'imagePaste', payload: ClipboardImagePayload): void
 }>()
 
 const containerRef = ref<HTMLElement | null>(null)
 let view: EditorView | null = null
 let isApplyingExternalUpdate = false
 
-function insertTemplate(template: string, cursorOffset?: number) {
+function insertText(text: string, cursorOffset?: number, replaceSlashPrefix = false) {
   if (!view) return
   const { from, to } = view.state.selection.main
   
-  // 检查光标前是否为 '/' 字符，若是则替换
   let start = from
-  if (start > 0 && view.state.doc.sliceString(start - 1, start) === '/') {
+  if (replaceSlashPrefix && start > 0 && view.state.doc.sliceString(start - 1, start) === '/') {
     start = start - 1
   }
 
   isApplyingExternalUpdate = true
   view.dispatch({
-    changes: { from: start, to, insert: template },
+    changes: { from: start, to, insert: text },
     selection: cursorOffset
-      ? { anchor: start + template.length - cursorOffset }
-      : { anchor: start + template.length },
+      ? { anchor: start + text.length - cursorOffset }
+      : { anchor: start + text.length },
   })
   isApplyingExternalUpdate = false
   emit('update:modelValue', view.state.doc.toString())
   view.focus()
 }
 
+function insertTemplate(template: string, cursorOffset?: number) {
+  insertText(template, cursorOffset, true)
+}
+
+async function emitClipboardImage(event: ClipboardEvent): Promise<void> {
+  const clipboardData = event.clipboardData
+  if (!clipboardData) {
+    return
+  }
+
+  const items = Array.from(clipboardData.items ?? [])
+  const matchedItem = items.find((item) => item.kind === 'file' && isSupportedClipboardImageType(item.type))
+  const matchedFile = matchedItem?.getAsFile()
+    ?? Array.from(clipboardData.files ?? []).find((file) => isSupportedClipboardImageType(file.type))
+
+  if (!matchedFile || !isSupportedClipboardImageType(matchedFile.type)) {
+    return
+  }
+
+  let buffer: ArrayBuffer
+  try {
+    buffer = await matchedFile.arrayBuffer()
+  } catch {
+    // Reading the clipboard file failed (e.g. corrupted/unreadable blob) — abort silently.
+    return
+  }
+
+  emit('imagePaste', {
+    mimeType: matchedFile.type,
+    bytes: Array.from(new Uint8Array(buffer)),
+  })
+}
+
 defineExpose({
   insertTemplate,
+  insertText,
 })
 
 function createState(doc: string): EditorState {
@@ -74,6 +110,24 @@ function createState(doc: string): EditorState {
             }
           }
           return false
+        },
+        paste(event) {
+          const clipboardData = event.clipboardData
+          if (!clipboardData) {
+            return false
+          }
+
+          const hasImage = Array.from(clipboardData.items ?? []).some(
+            (item) => item.kind === 'file' && isSupportedClipboardImageType(item.type),
+          ) || Array.from(clipboardData.files ?? []).some((file) => isSupportedClipboardImageType(file.type))
+
+          if (!hasImage) {
+            return false
+          }
+
+          event.preventDefault()
+          void emitClipboardImage(event)
+          return true
         },
       }),
       EditorView.updateListener.of((update) => {

@@ -81,7 +81,7 @@ development_status:
   epic-6-retrospective: optional
   epic-7: in-progress
   7-1-slash-command-task-list: done
-  7-2-clipboard-image-paste-and-local-storage: ready-for-dev
+  7-2-clipboard-image-paste-and-local-storage: done
   epic-7-retrospective: optional
   epic-8: in-progress
   8-1-export-self-contained-html: ready-for-dev

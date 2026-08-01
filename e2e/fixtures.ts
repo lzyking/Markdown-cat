@@ -37,6 +37,18 @@ async function injectMocks(page: Page) {
           },
         }
       },
+      save_image_asset: (args: any) => {
+        const dir = args?.targetDir || '/tmp/markdown-cat-test/assets'
+        const fn = args?.filename || 'img_test.png'
+        return {
+          ok: true,
+          data: {
+            filename: fn,
+            path: `${dir}/${fn}`,
+          },
+        }
+      },
+      copy_asset_file: () => ({ ok: true, data: { migrated: true } }),
     }
 
     const w = window as any
@@ -60,6 +72,8 @@ async function injectMocks(page: Page) {
     w.__TAURI_IPC__ = w.__TAURI_MOCK__
     w.__TAURI_INTERNALS__ = {
       invoke: (cmd: string, args?: unknown) => w.__TAURI_MOCK__.invoke(cmd, args),
+      convertFileSrc: (filePath: string, protocol = 'asset') =>
+        `${protocol}://localhost/${filePath.replace(/^\/+/, '').replace(/\\/g, '/')}`,
     }
 
     const timeouts: Array<{ id: number; fn: () => void; when: number; cleared: boolean }> = []

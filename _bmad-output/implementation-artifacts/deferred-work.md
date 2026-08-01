@@ -157,3 +157,38 @@ status: open
 - source_spec: `_bmad-output/implementation-artifacts/7-1-slash-command-task-list.md`
   summary: 预览区任务 checkbox 点击后通过 `content.value` 整体重写驱动 `SourceEditor`，触发编辑器 `from:0 to:doc.length` 的全量替换事务，而非仅针对被切换那一行的局部编辑事务。
   evidence: `src/components/SourceEditor.vue` 中 `watch(() => props.modelValue, ...)` 对任何外部内容变化统一走 `view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: next } })` 的全量替换路径；这是应用既有的、跨多个既有菜单项共享的内容同步机制（非本故事引入），但预览区勾选交互作为一种更细粒度的编辑操作，会因此对大文档产生不必要的撤销历史/滚动位置扰动，值得单独评估是否需要改为局部 change 事务。
+- source_spec: `_bmad-output/implementation-artifacts/7-2-clipboard-image-paste-and-local-storage.md`
+  summary: 剪贴板粘贴图片会无条件调用 `event.preventDefault()`，若剪贴板中同时含有图片以外的文本/HTML 内容，会被一并丢弃而非按原生行为一起粘贴。
+  evidence: `src/components/SourceEditor.vue` 的 `paste` 处理器只要检测到 `clipboardData` 中存在受支持类型的图片项，即调用 `event.preventDefault()` 并只处理图片，不会保留同一次粘贴中可能存在的富文本/纯文本内容。
+- source_spec: `_bmad-output/implementation-artifacts/7-2-clipboard-image-paste-and-local-storage.md`
+  summary: `save_image_asset` 后端命令未校验写入的字节内容确实是合法的 PNG/JPEG 图片，理论上可被用于写入任意二进制内容到受信目录中的任意合法文件名。
+  evidence: `src-tauri/src/commands/doc.rs` 的 `save_image_asset` 仅校验文件名合法性（无路径穿越），未对 `bytes` 做图片文件头/内容校验；前端已限制仅 `image/png`/`image/jpeg` 触发调用，但命令本身对上游数据来源零信任场景无防护。
+- source_spec: `_bmad-output/implementation-artifacts/7-2-clipboard-image-paste-and-local-storage.md`
+  summary: 前端将粘贴的图片二进制经 `ArrayBuffer` → `Uint8Array` → 普通 `number[]` 三次转换后再通过 IPC 传给后端，大尺寸截图会带来不必要的内存开销与潜在 UI 卡顿。
+  evidence: `src/components/SourceEditor.vue` 的 `emitClipboardImage` 使用 `Array.from(new Uint8Array(buffer))` 生成 `number[]` 作为 `ClipboardImagePayload.bytes`，未评估改用更高效的二进制传输方式（如 base64 或 Tauri 的 raw bytes 支持）对大图片粘贴性能的影响。
+- source_spec: `_bmad-output/implementation-artifacts/7-2-clipboard-image-paste-and-local-storage.md`
+  summary: 通过“上次打开文件”自动恢复会话时，`App.vue` 的 `onMounted` 只恢复了 `filename`/`content`，未同步设置 `currentFilePath`，导致自动恢复后的文档被当作“未保存”处理。
+  evidence: `src/App.vue` 的 `onMounted` 在 `read_external_document` 成功后仅赋值 `filename.value`/`content.value`，未对 `currentFilePath.value` 赋值（对比 `loadFileFromPath` 中会显式设置）；这是 `lastOpenedFile` 会话恢复机制的既有行为（本故事之前已存在），本故事新增的粘贴图片功能依赖 `currentFilePath` 判断保存目录，因而放大了该问题的可观察影响（自动恢复的文档粘贴图片会被存入回退 `assets/` 目录而非文档同目录）。
+- source_spec: `_bmad-output/implementation-artifacts/7-2-clipboard-image-paste-and-local-storage.md`
+  summary: `copy_asset_between_dirs`（“另存为”资源迁移）在目标目录已存在同名文件时会用 `fs::copy` 直接覆盖，而非像粘贴保存那样做唯一化处理。
+  evidence: `src-tauri/src/doc.rs` 的 `copy_asset_between_dirs` 对 `dest` 路径直接调用 `fs::copy(&source, &dest)`，未检测 `dest` 是否已存在；若新文档目录中恰好已有一个同名（含相同时间戳+Hash）图片文件，迁移会静默覆盖它。触发概率极低（需要文件名完全一致），但修复需要同时更新 Markdown 正文中对应的图片引用路径，非本轮可安全自动完成的最小改动，故记录以待后续统一处理。
+- source_spec: `_bmad-output/implementation-artifacts/7-2-clipboard-image-paste-and-local-storage.md`
+  summary: “另存为”资源迁移失败或跳过（`migrated: false`，例如源文件已被外部删除）时，前端仅 `console.error` 记录，UI 仍提示“已另存为 …”成功，用户无法察觉正文中引用的图片实际未随文档迁移。
+  evidence: `src/App.vue` 的 `handleSaveAsFile` 对 `copy_asset_file` 的返回结果（含 `AssetMigrationResult.migrated`）未做任何检查，也未在迁移失败/跳过时更新 `saveMessage`；用户保存后仍会看到成功提示，直到重新打开文档发现图片链接失效才会察觉。
+- source_spec: `_bmad-output/implementation-artifacts/7-2-clipboard-image-paste-and-local-storage.md`
+  summary: `extractAssetReferences` 仅识别 `![alt](./assets/filename)` 这一种内联 Markdown 图片写法，无法识别 HTML `<img>`、引用式链接、带标题的链接，或不带 `./` 前缀的 `assets/filename` 路径，这些引用在“另存为”迁移时会被漏迁移。
+  evidence: `src/lib/image-assets.ts` 的 `extractAssetReferences` 使用固定正则 `/!\[[^\]]*\]\(\.\/assets\/([^)\s]+)\)/g` 匹配，无法覆盖用户手写或从其他工具粘贴进来的其它合法 Markdown/HTML 图片引用写法，导致这些引用对应的图片文件在目录迁移后失效。
+- source_spec: `_bmad-output/implementation-artifacts/7-2-clipboard-image-paste-and-local-storage.md`
+  summary: 现有测试大量依赖对 `save_image_asset`/`copy_asset_file`/`convertFileSrc` 等 Tauri 命令的 mock，未覆盖真实文件系统写入、asset 协议作用域动态放宽、命名冲突退避、以及迁移失败等路径的端到端行为。
+  evidence: `e2e/story-7-2.spec.ts`、`e2e/fixtures.ts` 中对粘贴图片相关命令均通过 `window.__TAURI_MOCK__` 注入返回值模拟，未驱动真实 Tauri 后端往返；这些集成层面的行为目前仅由 `src-tauri/src/doc.rs` 内的 Rust 单元测试局部覆盖，缺少跨前后端的真实闭环验证。
+- source_spec: `_bmad-output/implementation-artifacts/7-2-clipboard-image-paste-and-local-storage.md`
+  summary: 剪贴板粘贴图片写盘为异步操作，`SourceEditor.insertText` 在后端保存返回后才读取当前选区来定位插入点，若用户在写盘期间继续输入会导致图片 Markdown 链接插入到错误的光标位置。
+  evidence: `src/components/SourceEditor.vue` 的 `emitClipboardImage`/`insertText` 只在 `invoke('save_image_asset', ...)` resolve 之后调用 `view.state.selection.main` 取当前选区作为插入位置，未在粘贴发生的瞬间捕获选区、也未通过编辑器的变更描述（change mapping）把该位置映射穿过写盘期间发生的中间编辑；修复需要引入位置映射逻辑，非本轮可安全自动完成的最小改动，故记录以待后续统一处理。
+
+### DW-13: Follow-up review still recommended for 7-2-clipboard-image-paste-and-local-storage after the damping cap was spent
+origin: review-budget-followup
+location: n/a
+source_spec: `7-2-clipboard-image-paste-and-local-storage.md`
+severity: low
+reason: The follow-up-review damping cap (limits.max_followup_reviews = 1) was spent with the story finalized (status: done, verify green) while the review pass still recommended an independent follow-up. The work was committed by bmad-loop run 20260801-121843-460e; this entry preserves the lingering recommendation for a deliberate later review.
+status: open

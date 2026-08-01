@@ -54,6 +54,13 @@ pub struct SaveResult {
     pub path: String,
 }
 
+/// 剪贴板图片保存成功结果。
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+pub struct ImageSaveResult {
+    pub filename: String,
+    pub path: String,
+}
+
 /// 保存 Markdown 文档。
 /// 前端在防抖触发后调用，保存成功后返回 SaveResult 包含文件名与绝对路径。
 #[tauri::command]
@@ -90,8 +97,13 @@ pub fn save_document(
 }
 
 /// 读取外部文件路径的内容与文件名。
+/// 读取成功后动态放宽该文件所在目录的 asset:// 协议可访问范围，
+/// 使文档中已存在的相对路径图片（非本次会话粘贴产生）也能在预览中正常渲染，
+/// 而不必等到本次会话内首次粘贴/迁移图片才被动放宽。
 #[tauri::command]
-pub fn read_external_document(path: String) -> CmdResult<DocumentState> {
+pub fn read_external_document(app_handle: tauri::AppHandle, path: String) -> CmdResult<DocumentState> {
+    use tauri::Manager;
+
     let p = std::path::Path::new(&path);
     if !p.exists() || !p.is_file() {
         return CmdResult::failure("ERR_FILE_NOT_FOUND".to_string());
@@ -110,6 +122,11 @@ pub fn read_external_document(path: String) -> CmdResult<DocumentState> {
                 .file_name()
                 .map(|s| s.to_string_lossy().to_string())
                 .unwrap_or_else(|| "Untitled.md".to_string());
+            if let Some(parent) = p.parent() {
+                if let Err(e) = app_handle.asset_protocol_scope().allow_directory(parent, true) {
+                    eprintln!("Failed to widen asset protocol scope for {}: {e}", parent.display());
+                }
+            }
             CmdResult::success(DocumentState { filename, content })
         }
         Err(e) => CmdResult::failure(format!("ERR_READ_FILE_FAILED: {}", e)),
@@ -117,8 +134,12 @@ pub fn read_external_document(path: String) -> CmdResult<DocumentState> {
 }
 
 /// 将文档另存为指定绝对路径。
+/// 保存成功后动态放宽目标目录的 asset:// 协议可访问范围，
+/// 使新目录中已存在的相对路径图片也能在预览中正常渲染。
 #[tauri::command]
-pub fn save_document_as(target_path: String, content: String) -> CmdResult<SaveResult> {
+pub fn save_document_as(app_handle: tauri::AppHandle, target_path: String, content: String) -> CmdResult<SaveResult> {
+    use tauri::Manager;
+
     let path = std::path::Path::new(&target_path);
     if let Some(parent) = path.parent() {
         if let Err(e) = std::fs::create_dir_all(parent) {
@@ -131,11 +152,75 @@ pub fn save_document_as(target_path: String, content: String) -> CmdResult<SaveR
                 .file_name()
                 .map(|s| s.to_string_lossy().to_string())
                 .unwrap_or_else(|| "Untitled.md".to_string());
+            if let Some(parent) = path.parent() {
+                if let Err(e) = app_handle.asset_protocol_scope().allow_directory(parent, true) {
+                    eprintln!("Failed to widen asset protocol scope for {}: {e}", parent.display());
+                }
+            }
             CmdResult::success(SaveResult {
                 filename,
                 path: target_path,
             })
         }
         Err(e) => CmdResult::failure(format!("ERR_SAVE_FAILED: {}", e)),
+    }
+}
+
+/// 将剪贴板图片以二进制形式写入指定目录。
+/// 写入成功后会动态放宽 asset:// 协议的可访问范围，
+/// 使目标目录之外（例如 $HOME/$APPDATA 之外的自定义保存目录）中的图片也能在预览中正常渲染。
+#[tauri::command]
+pub fn save_image_asset(
+    app_handle: tauri::AppHandle,
+    target_dir: String,
+    filename: String,
+    bytes: Vec<u8>,
+) -> CmdResult<ImageSaveResult> {
+    use tauri::Manager;
+
+    let directory = std::path::Path::new(&target_dir);
+    match doc::save_binary_asset_to_dir(directory, &filename, &bytes) {
+        Ok((final_name, full_path)) => {
+            if let Err(e) = app_handle.asset_protocol_scope().allow_directory(directory, true) {
+                // File is already written; only the asset:// preview scope grant failed.
+                // Do not fail the whole command for this, but surface it for diagnosis.
+                eprintln!("Failed to widen asset protocol scope for {target_dir}: {e}");
+            }
+            CmdResult::success(ImageSaveResult {
+                filename: final_name,
+                path: full_path,
+            })
+        }
+        Err(e) => CmdResult::failure(e),
+    }
+}
+
+/// 将暂存资源文件从旧目录迁移到新目录（用于文档“另存为”后同步图片位置）。
+/// 若源文件不存在，视为无需迁移，返回成功但 `migrated: false`。
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+pub struct AssetMigrationResult {
+    pub migrated: bool,
+}
+
+#[tauri::command]
+pub fn copy_asset_file(
+    app_handle: tauri::AppHandle,
+    from_dir: String,
+    to_dir: String,
+    filename: String,
+) -> CmdResult<AssetMigrationResult> {
+    use tauri::Manager;
+
+    let from = std::path::Path::new(&from_dir);
+    let to = std::path::Path::new(&to_dir);
+    match doc::copy_asset_between_dirs(from, to, &filename) {
+        Ok(Some(_path)) => {
+            if let Err(e) = app_handle.asset_protocol_scope().allow_directory(to, true) {
+                eprintln!("Failed to widen asset protocol scope for {to_dir}: {e}");
+            }
+            CmdResult::success(AssetMigrationResult { migrated: true })
+        }
+        Ok(None) => CmdResult::success(AssetMigrationResult { migrated: false }),
+        Err(e) => CmdResult::failure(e),
     }
 }

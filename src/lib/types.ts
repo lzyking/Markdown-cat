@@ -19,3 +19,8 @@ export interface SaveResult {
   filename: string
   path: string
 }
+
+export interface ClipboardImagePayload {
+  mimeType: 'image/png' | 'image/jpeg'
+  bytes: number[]
+}

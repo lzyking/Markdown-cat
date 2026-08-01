@@ -19,7 +19,9 @@ pub fn run() {
             commands::doc::get_blank_document,
             commands::doc::read_external_document,
             commands::doc::save_document,
-            commands::doc::save_document_as
+            commands::doc::save_document_as,
+            commands::doc::save_image_asset,
+            commands::doc::copy_asset_file
         ])
         .setup(|_app| {
             #[cfg(debug_assertions)]
