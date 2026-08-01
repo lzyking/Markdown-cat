@@ -49,10 +49,11 @@ test.describe('Epic 5 (v0.2.0)：新功能自动化测试套件', () => {
     await expect(header).toHaveText('快捷插入 Markdown')
 
     const items = page.locator('.slash-menu-item')
-    await expect(items).toHaveCount(9)
+    await expect(items).toHaveCount(10)
 
-    // 验证包含 H1 一级标题与加粗等菜单
+    // 验证包含 H1 一级标题与 Task List 等菜单
     await expect(items.first()).toContainText('H1 一级标题')
+    await expect(page.locator('.slash-menu-item', { hasText: 'Task List 任务列表' })).toHaveCount(1)
   })
 
   // TID: S5.4-E2E-002

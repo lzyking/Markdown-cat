@@ -6,6 +6,10 @@ const props = defineProps<{
   content: string
 }>()
 
+const emit = defineEmits<{
+  (e: 'toggle-task', index: number): void
+}>()
+
 type PreviewLayout = 'compact' | 'regular' | 'wide'
 
 const previewPaneRef = ref<HTMLElement | null>(null)
@@ -77,7 +81,9 @@ function scheduleResponsiveLayout(width: number) {
   })
 }
 
-const html = computed(() => decorateRenderedHtml(renderMarkdown(props.content)))
+const renderResult = computed(() => renderMarkdown(props.content))
+const html = computed(() => decorateRenderedHtml(renderResult.value.html))
+const currentTaskNonce = computed(() => renderResult.value.taskNonce)
 const isEmpty = computed(() => !props.content || props.content.trim() === '')
 const responsiveStyle = computed<Record<string, string>>(() => {
   const layoutStyles: Record<PreviewLayout, Record<string, string>> = {
@@ -105,13 +111,30 @@ const responsiveStyle = computed<Record<string, string>>(() => {
 const EMPTY_STATE_TEXT = '开始输入 Markdown，右侧将实时预览。'
 
 function onPreviewClick(event: MouseEvent) {
-  const target = event.target as HTMLElement
-  const link = target.closest('a')
-  if (!link) {
+  const target = event.target
+  if (!(target instanceof Element)) {
     return
   }
 
-  event.preventDefault()
+  const checkbox = target.closest('input[type="checkbox"][data-task-index]')
+  if (checkbox instanceof HTMLInputElement) {
+    event.preventDefault()
+    // 校验 nonce：只信任本次渲染由 renderMarkdown 生成的 checkbox，
+    // 防止用户在 Markdown 源码里手写伪造的 <input data-task-index> 触发误翻转。
+    if (checkbox.dataset.taskNonce !== currentTaskNonce.value || !currentTaskNonce.value) {
+      return
+    }
+    const index = Number(checkbox.dataset.taskIndex)
+    if (Number.isInteger(index)) {
+      emit('toggle-task', index)
+    }
+    return
+  }
+
+  const link = target.closest('a')
+  if (link) {
+    event.preventDefault()
+  }
 }
 
 onMounted(() => {
@@ -251,6 +274,12 @@ onUnmounted(() => {
 
 .preview-content :deep(li) {
   margin: var(--spacing-sm) 0;
+}
+
+.preview-content :deep(input[type='checkbox'][data-task-nonce]) {
+  cursor: pointer;
+  inline-size: 16px;
+  block-size: 16px;
 }
 
 .preview-content :deep(pre) {

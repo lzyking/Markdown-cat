@@ -28,6 +28,7 @@ const items: SlashMenuItem[] = [
   { id: 'codeblock', label: '代码块', shortcut: '```', template: '```\n\n```', cursorOffset: 4 },
   { id: 'ul', label: '无序列表', shortcut: '- ', template: '- ' },
   { id: 'ol', label: '有序列表', shortcut: '1. ', template: '1. ' },
+  { id: 'task', label: 'Task List 任务列表', shortcut: '- [ ] ', template: '- [ ] ' },
 ]
 
 const selectedIndex = ref(0)

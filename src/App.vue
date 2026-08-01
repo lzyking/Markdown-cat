@@ -251,6 +251,43 @@ function onSlashSelect(item: SlashMenuItem) {
   isSlashMenuOpen.value = false
 }
 
+// 有序列表分隔符同时支持 `.` 与 `)`，与 marked 的列表解析行为保持一致（见 marked ListToken）。
+const TASK_LIST_LINE_PATTERN = /^(\s*(?:>\s*)*(?:[-*+]|\d+[.)])\s+)\[([ xX])\](.*)$/
+// 围栏代码块起止标记（``` 或 ~~~，至少 3 个字符），用于跳过代码块内文本，
+// 避免其中形如 "- [ ] xxx" 的纯文本被误当作真实任务行计数，
+// 导致预览区 checkbox 索引与源码行索引错位、翻转到错误的行。
+const FENCE_LINE_PATTERN = /^\s*(`{3,}|~{3,})/
+
+function onToggleTask(index: number) {
+  const lines = content.value.split('\n')
+  let taskIndex = 0
+  let inFence = false
+
+  for (let i = 0; i < lines.length; i += 1) {
+    if (FENCE_LINE_PATTERN.test(lines[i])) {
+      inFence = !inFence
+      continue
+    }
+    if (inFence) {
+      continue
+    }
+
+    const match = lines[i].match(TASK_LIST_LINE_PATTERN)
+    if (!match) {
+      continue
+    }
+
+    if (taskIndex === index) {
+      const [, prefix, marker, rest] = match
+      lines[i] = `${prefix}[${marker === ' ' ? 'x' : ' '}]${rest}`
+      content.value = lines.join('\n')
+      return
+    }
+
+    taskIndex += 1
+  }
+}
+
 const SPLITTER_WIDTH = 4
 
 function clampLeftWidth(newWidth: number, containerWidth: number): number {
@@ -464,7 +501,7 @@ if ((window as any).__TAURI_MOCK__) {
         class="editor-pane preview-pane"
         :style="{ width: leftWidth > 0 ? `calc(100% - ${leftWidth}px - ${SPLITTER_WIDTH}px)` : `calc(50% - ${SPLITTER_WIDTH / 2}px)` }"
       >
-        <PreviewPane :content="content" />
+        <PreviewPane :content="content" @toggle-task="onToggleTask" />
       </section>
     </main>
     <StatusBar

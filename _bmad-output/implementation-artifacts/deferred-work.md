@@ -145,3 +145,15 @@ status: open
 - source_spec: `_bmad-output/implementation-artifacts/6-2-file-menu-theme-selector.md`
   summary: `e2e/story-6-2.spec.ts` 对 AC3 的持久化验证依赖前端 Tauri mock 注入的 `get_config` 返回值模拟“重启”，并未真正验证 Rust 侧写入并重新读取 `config.json` 的完整闭环；同时缺少对 `set_config` 失败时主题回滚路径、以及配置中存有非法 `themeId` 时前端回退逻辑的测试覆盖。
   evidence: `e2e/story-6-2.spec.ts` 的持久化用例通过 `page.addInitScript` 注入 `__TAURI_MOCK_CONFIG__` 模拟重启后的配置，而不是驱动真实的 Tauri 后端往返；`src/App.vue` 的 `handleThemeSelect` 失败回滚逻辑与 `src/lib/themes.ts` 的 `getResolvedThemeId` 回退逻辑均无对应测试用例。
+- source_spec: `_bmad-output/implementation-artifacts/7-1-slash-command-task-list.md`
+  summary: `SourceEditor.insertTemplate` 仅替换触发用的 `/` 字符，并非真正在“行首”插入；若光标在行中间触发 slash 菜单，插入内容会拼接在光标处而非行首。
+  evidence: `src/components/SourceEditor.vue` 的 `insertTemplate` 只在光标前一个字符是 `/` 时把它连同后续内容替换为模板，不会主动定位到行首；这是 ul/ol/quote 等既有菜单项共享的历史行为（本故事的 task-list 项复用同一机制），非本故事新引入，需要单独的规格决策后统一修复。
+- source_spec: `_bmad-output/implementation-artifacts/7-1-slash-command-task-list.md`
+  summary: 预览区渲染出的任务列表 checkbox 缺少可访问的 label/name，只有小方框本身可点击，点击任务文字本身无效果。
+  evidence: `src/lib/markdown.ts` 的 `TaskAwareRenderer.checkbox()` 仅输出裸 `<input type="checkbox">`，未关联同一 `<li>` 内的文本作为可点击标签，也未设置 `aria-label`；不影响本故事 AC 的达成，但存在可访问性提升空间。
+- source_spec: `_bmad-output/implementation-artifacts/7-1-slash-command-task-list.md`
+  summary: 预览区新增的可交互 checkbox 会加入原生 Tab 焦点顺序，使原本作为被动展示区域的预览面板新增多个可聚焦停靠点，可能影响整体键盘导航体验。
+  evidence: `src/components/PreviewPane.vue` 渲染的 `<input type="checkbox">` 未设置 `tabindex="-1"` 或其他方式移出默认 Tab 顺序，长文档中含多个任务项时会显著增加预览区的 Tab 停靠次数。
+- source_spec: `_bmad-output/implementation-artifacts/7-1-slash-command-task-list.md`
+  summary: 预览区任务 checkbox 点击后通过 `content.value` 整体重写驱动 `SourceEditor`，触发编辑器 `from:0 to:doc.length` 的全量替换事务，而非仅针对被切换那一行的局部编辑事务。
+  evidence: `src/components/SourceEditor.vue` 中 `watch(() => props.modelValue, ...)` 对任何外部内容变化统一走 `view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: next } })` 的全量替换路径；这是应用既有的、跨多个既有菜单项共享的内容同步机制（非本故事引入），但预览区勾选交互作为一种更细粒度的编辑操作，会因此对大文档产生不必要的撤销历史/滚动位置扰动，值得单独评估是否需要改为局部 change 事务。
