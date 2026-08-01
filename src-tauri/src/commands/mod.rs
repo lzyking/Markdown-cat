@@ -40,6 +40,7 @@ impl CmdResult<()> {
 }
 
 pub mod config;
+pub mod confluence;
 pub mod doc;
 pub mod pdf_export;
 

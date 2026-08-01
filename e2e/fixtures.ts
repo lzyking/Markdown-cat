@@ -10,6 +10,10 @@ async function injectMocks(page: Page) {
   await page.addInitScript(() => {
     const invocations: Array<{ command: string; args: unknown }> = []
     const dialogInvocations: Array<{ method: 'open' | 'save'; options: unknown }> = []
+    const openedUrls: string[] = []
+    const eventListeners = new Map<string, number[]>()
+    const callbacks = new Map<number, (payload: unknown) => unknown>()
+    let callbackIdCounter = 1
     const handlers: Record<string, (args: unknown) => unknown> = {
       ping: () => 'pong',
       init_app: () => ({ ok: true }),
@@ -109,6 +113,26 @@ async function injectMocks(page: Page) {
     const w = window as any
     w.__TAURI_MOCK__ = {
       invoke: async (command: string, args?: unknown) => {
+        if (command === 'plugin:event|listen') {
+          const event = String((args as any)?.event || '')
+          const handlerId = Number((args as any)?.handler)
+          const listeners = eventListeners.get(event) || []
+          listeners.push(handlerId)
+          eventListeners.set(event, listeners)
+          return handlerId
+        }
+        if (command === 'plugin:event|unlisten') {
+          const event = String((args as any)?.event || '')
+          const eventId = Number((args as any)?.eventId)
+          const listeners = eventListeners.get(event) || []
+          eventListeners.set(event, listeners.filter((listenerId) => listenerId !== eventId))
+          callbacks.delete(eventId)
+          return null
+        }
+        if (command === 'plugin:opener|open_url') {
+          openedUrls.push(String((args as any)?.url || ''))
+          return null
+        }
         invocations.push({ command, args })
         const handler = handlers[command]
         if (!handler) {
@@ -129,19 +153,53 @@ async function injectMocks(page: Page) {
       __registerHandler: (command: string, handler: (args: unknown) => unknown) => {
         handlers[command] = handler
       },
+      emitEvent: (event: string, payload: unknown) => {
+        const listeners = eventListeners.get(event) || []
+        listeners.forEach((listenerId) => {
+          callbacks.get(listenerId)?.({
+            event,
+            id: listenerId,
+            payload,
+          })
+        })
+      },
+      openUrl: async (url: string) => {
+        openedUrls.push(url)
+      },
       get invocations() {
         return invocations
       },
       get dialogInvocations() {
         return dialogInvocations
       },
+      get openedUrls() {
+        return openedUrls
+      },
     }
     w.__TAURI__ = w.__TAURI_MOCK__
     w.__TAURI_IPC__ = w.__TAURI_MOCK__
     w.__TAURI_INTERNALS__ = {
       invoke: (cmd: string, args?: unknown) => w.__TAURI_MOCK__.invoke(cmd, args),
+      transformCallback: (callback: (payload: unknown) => unknown, once = false) => {
+        const id = callbackIdCounter++
+        callbacks.set(id, (payload) => {
+          if (once) {
+            callbacks.delete(id)
+          }
+          return callback(payload)
+        })
+        return id
+      },
+      unregisterCallback: (id: number) => {
+        callbacks.delete(id)
+      },
       convertFileSrc: (filePath: string, protocol = 'asset') =>
         `${protocol}://localhost/${filePath.replace(/^\/+/, '').replace(/\\/g, '/')}`,
+    }
+    w.__TAURI_EVENT_PLUGIN_INTERNALS__ = {
+      unregisterListener: (_event: string, id: number) => {
+        callbacks.delete(id)
+      },
     }
 
     const timeouts: Array<{ id: number; fn: () => void; when: number; cleared: boolean }> = []

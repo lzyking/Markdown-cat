@@ -12,6 +12,10 @@ import { type Page } from '@playwright/test'
 export function injectTauriMock(page: Page) {
   return page.evaluateHandle(() => {
     const invocations: Array<{ command: string; args: unknown }> = []
+    const openedUrls: string[] = []
+    const eventListeners = new Map<string, number[]>()
+    const callbacks = new Map<number, (payload: unknown) => unknown>()
+    let callbackIdCounter = 1
     const handlers: Record<string, (args: unknown) => unknown> = {
       ping: () => 'pong',
       init_app: () => ({ ok: true }),
@@ -53,10 +57,38 @@ export function injectTauriMock(page: Page) {
         ok: true,
         data: { filename: 'New_Document.md', content: '' },
       }),
+      publish_confluence: () => ({
+        ok: true,
+        data: {
+          pageId: '123',
+          pageUrl: 'https://example.atlassian.net/wiki/pages/viewpage.action?pageId=123',
+          warnings: [],
+        },
+      }),
     }
 
     const mock = {
       invoke: async (command: string, args?: unknown) => {
+        if (command === 'plugin:event|listen') {
+          const event = String((args as any)?.event || '')
+          const handlerId = Number((args as any)?.handler)
+          const listeners = eventListeners.get(event) || []
+          listeners.push(handlerId)
+          eventListeners.set(event, listeners)
+          return handlerId
+        }
+        if (command === 'plugin:event|unlisten') {
+          const event = String((args as any)?.event || '')
+          const eventId = Number((args as any)?.eventId)
+          const listeners = eventListeners.get(event) || []
+          eventListeners.set(event, listeners.filter((listenerId) => listenerId !== eventId))
+          callbacks.delete(eventId)
+          return null
+        }
+        if (command === 'plugin:opener|open_url') {
+          openedUrls.push(String((args as any)?.url || ''))
+          return null
+        }
         invocations.push({ command, args })
         const handler = handlers[command]
         if (!handler) {
@@ -65,8 +97,19 @@ export function injectTauriMock(page: Page) {
         return handler(args)
       },
       __mockInvocations: invocations,
+      openedUrls,
       __registerHandler: (command: string, handler: (args: unknown) => unknown) => {
         handlers[command] = handler
+      },
+      emitEvent: (event: string, payload: unknown) => {
+        const listeners = eventListeners.get(event) || []
+        listeners.forEach((listenerId) => {
+          callbacks.get(listenerId)?.({
+            event,
+            id: listenerId,
+            payload,
+          })
+        })
       },
     }
 
@@ -74,6 +117,29 @@ export function injectTauriMock(page: Page) {
     window.__TAURI__ = mock
     // @ts-expect-error 兼容旧版直接访问 window.__TAURI_IPC__
     window.__TAURI_IPC__ = mock
+    // @ts-expect-error 兼容 @tauri-apps/api/core 与 @tauri-apps/api/event
+    window.__TAURI_INTERNALS__ = {
+      invoke: (cmd: string, args?: unknown) => mock.invoke(cmd, args),
+      transformCallback: (callback: (payload: unknown) => unknown, once = false) => {
+        const id = callbackIdCounter++
+        callbacks.set(id, (payload) => {
+          if (once) {
+            callbacks.delete(id)
+          }
+          return callback(payload)
+        })
+        return id
+      },
+      unregisterCallback: (id: number) => {
+        callbacks.delete(id)
+      },
+    }
+    // @ts-expect-error 兼容 @tauri-apps/api/event
+    window.__TAURI_EVENT_PLUGIN_INTERNALS__ = {
+      unregisterListener: (_event: string, id: number) => {
+        callbacks.delete(id)
+      },
+    }
 
     return mock
   })

@@ -352,7 +352,7 @@ fn read_saved_confluence_token() -> Result<String, TokenReadState> {
     }
 }
 
-fn resolve_connection_token(api_token: Option<String>) -> Result<String, String> {
+pub(crate) fn resolve_connection_token(api_token: Option<String>) -> Result<String, String> {
     if let Some(api_token) = api_token {
         let token = api_token.trim().to_string();
         if !token.is_empty() {

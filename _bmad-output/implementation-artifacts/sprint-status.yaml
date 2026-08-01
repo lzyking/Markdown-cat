@@ -89,7 +89,7 @@ development_status:
   epic-8-retrospective: optional
   epic-9: in-progress
   9-1-confluence-config-setting-dialog: done
-  9-2-confluence-md2cf-publisher: ready-for-dev
+  9-2-confluence-md2cf-publisher: awaiting-operator
   epic-9-retrospective: optional
   epic-10: in-progress
   10-1-windows-noconsole-gui-attribute: ready-for-dev

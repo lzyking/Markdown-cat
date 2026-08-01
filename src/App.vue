@@ -1,11 +1,14 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
+import { openUrl } from '@tauri-apps/plugin-opener'
 import TitleBar from './components/TitleBar.vue'
 import MenuBar from './components/MenuBar.vue'
 import StatusBar from './components/StatusBar.vue'
 import SourceEditor from './components/SourceEditor.vue'
 import PreviewPane from './components/PreviewPane.vue'
+import PublishConfluenceModal from './components/PublishConfluenceModal.vue'
 import SettingsModal from './components/SettingsModal.vue'
 import SlashMenu, { type SlashMenuItem } from './components/SlashMenu.vue'
 import type { CursorPosition } from './components/SourceEditor.vue'
@@ -13,6 +16,7 @@ import { applyTheme, getActiveThemeId } from './lib/theme'
 import { renderMarkdown } from './lib/markdown'
 import { getResolvedThemeId } from './lib/themes'
 import { exportSelfContainedHtml, isHtmlExportCancelledError, type ExportImageWarning } from './lib/export-html'
+import { convertMarkdownToConfluenceStorage } from './lib/confluence-publish'
 import {
   extractAssetReferences,
   extractSiblingImageReferences,
@@ -21,7 +25,19 @@ import {
   joinFilePath,
 } from './lib/image-assets'
 import { openDialog, saveDialog } from './lib/tauri-dialog'
-import type { AppConfig, ClipboardImagePayload, DocumentState, CmdResult, ReadImageAssetResult, SaveResult } from './lib/types'
+import type {
+  AppConfig,
+  ClipboardImagePayload,
+  CmdResult,
+  ConfluenceImageUpload,
+  ConfluencePublishPayload,
+  ConfluencePublishProgress,
+  ConfluencePublishResult,
+  DocumentState,
+  Md2cfCheckResult,
+  ReadImageAssetResult,
+  SaveResult,
+} from './lib/types'
 
 const filename = ref('New_*.md')
 const content = ref('')
@@ -45,6 +61,7 @@ const slashMenuPosition = ref({ top: 0, left: 0 })
 
 // Settings Modal 状态
 const isSettingsOpen = ref(false)
+const isPublishConfluenceOpen = ref(false)
 const currentSavePath = ref('')
 const activeThemeId = ref(getActiveThemeId())
 
@@ -57,6 +74,15 @@ interface ExportProgressState {
   message: string
   warnings: ExportImageWarning[]
 }
+interface PublishProgressState {
+  active: boolean
+  running: boolean
+  steps: ConfluencePublishProgress[]
+  successMessage: string
+  errorMessage: string
+  pageUrl: string
+  warnings: string[]
+}
 type ExportKind = 'HTML' | 'PDF'
 
 const saveStatus = ref<SaveStatus>('unsaved')
@@ -66,6 +92,15 @@ const exportProgress = ref<ExportProgressState>({
   current: 0,
   total: 0,
   message: '',
+  warnings: [],
+})
+const publishProgress = ref<PublishProgressState>({
+  active: false,
+  running: false,
+  steps: [],
+  successMessage: '',
+  errorMessage: '',
+  pageUrl: '',
   warnings: [],
 })
 const activeExportKind = ref<ExportKind>('HTML')
@@ -85,6 +120,19 @@ const exportProgressPercent = computed(() => {
   return Math.min(100, Math.round((exportProgress.value.current / exportProgress.value.total) * 100))
 })
 const visibleExportWarnings = computed(() => exportProgress.value.warnings.slice(-3))
+const PUBLISH_STEP_ORDER = ['环境检测', '附件上传', '页面发布'] as const
+
+function createPublishProgressState(): PublishProgressState {
+  return {
+    active: false,
+    running: false,
+    steps: [],
+    successMessage: '',
+    errorMessage: '',
+    pageUrl: '',
+    warnings: [],
+  }
+}
 
 let autoSaveTimer: number | null = null
 let exportAbortController: AbortController | null = null
@@ -124,6 +172,66 @@ function resetExportProgress() {
     warnings: [],
   }
   exportCancelable.value = true
+}
+
+function resetPublishProgress() {
+  publishProgress.value = createPublishProgressState()
+}
+
+function formatConfluencePublishError(rawError?: string): string {
+  if (!rawError) return '发布到 Confluence 失败：未知错误'
+  if (rawError.startsWith('ERR_CONFLUENCE_PUBLISH_CONFIG_INCOMPLETE')) {
+    return '发布到 Confluence 失败：请先在设置中完善 Confluence 地址、用户名、Space Key 与 API Token'
+  }
+  if (rawError.startsWith('ERR_CONFLUENCE_PAGE_LOOKUP_FAILED')) {
+    return `发布到 Confluence 失败：页面查询失败。${rawError.split(':').slice(1).join(':').trim()}`
+  }
+  if (rawError.startsWith('ERR_CONFLUENCE_PAGE_CREATE_FAILED')) {
+    return `发布到 Confluence 失败：页面创建失败。${rawError.split(':').slice(1).join(':').trim()}`
+  }
+  if (rawError.startsWith('ERR_CONFLUENCE_PAGE_UPDATE_FAILED')) {
+    return `发布到 Confluence 失败：页面更新失败。${rawError.split(':').slice(1).join(':').trim()}`
+  }
+  if (rawError.startsWith('ERR_CONFLUENCE_ATTACHMENT_UPLOAD_FAILED')) {
+    return `发布到 Confluence 失败：附件上传失败。${rawError.split(':').slice(1).join(':').trim()}`
+  }
+  if (rawError.startsWith('发布到 Confluence 失败：')) return rawError
+  return `发布到 Confluence 失败：${rawError}`
+}
+
+function deriveConfluencePageTitle(sourceFilename: string): string {
+  const trimmedFilename = sourceFilename.trim() || 'Untitled.md'
+  if (/\.(md|markdown|txt)$/i.test(trimmedFilename)) {
+    return trimmedFilename.replace(/\.(md|markdown|txt)$/i, '') || 'Untitled'
+  }
+  return trimmedFilename
+}
+
+function mergePublishProgress(
+  update: ConfluencePublishProgress,
+  options: { appendMessage?: boolean } = {},
+) {
+  const steps = [...publishProgress.value.steps]
+  const existingIndex = steps.findIndex((entry) => entry.step === update.step)
+  const nextMessage = options.appendMessage && existingIndex >= 0 && steps[existingIndex].message
+    ? `${steps[existingIndex].message}\n${update.message}`
+    : update.message
+  const nextEntry: ConfluencePublishProgress = {
+    ...update,
+    message: nextMessage,
+  }
+
+  if (existingIndex >= 0) {
+    steps.splice(existingIndex, 1, nextEntry)
+  } else {
+    steps.push(nextEntry)
+  }
+
+  steps.sort((a, b) => PUBLISH_STEP_ORDER.indexOf(a.step as any) - PUBLISH_STEP_ORDER.indexOf(b.step as any))
+  publishProgress.value = {
+    ...publishProgress.value,
+    steps,
+  }
 }
 
 function updateExportProgress(next: Partial<ExportProgressState>) {
@@ -183,6 +291,28 @@ async function readLocalImageForExport(absolutePath: string) {
   }
 
   return result.data
+}
+
+async function readLocalImageForPublish(absolutePath: string) {
+  const result = await invoke<CmdResult<ReadImageAssetResult>>('read_image_asset', {
+    path: absolutePath,
+    maxInlineSizeBytes: 50 * 1024 * 1024,
+  })
+
+  if (!result.ok || !result.data) {
+    throw new Error(result.error || 'ERR_READ_FILE_FAILED')
+  }
+
+  return result.data
+}
+
+async function openPublishedPage(url: string) {
+  const tauriMock = (window as any).__TAURI_MOCK__
+  if (tauriMock?.openUrl) {
+    await tauriMock.openUrl(url)
+    return
+  }
+  await openUrl(url)
 }
 
 async function handleExportHtml() {
@@ -324,6 +454,166 @@ async function handleExportPdf() {
   } finally {
     exportAbortController = null
     resetExportProgress()
+  }
+}
+
+function closePublishConfluenceModal() {
+  isPublishConfluenceOpen.value = false
+  if (!publishProgress.value.running) {
+    resetPublishProgress()
+  }
+}
+
+async function handleOpenPublishedConfluencePage() {
+  if (!publishProgress.value.pageUrl) {
+    return
+  }
+
+  try {
+    await openPublishedPage(publishProgress.value.pageUrl)
+  } catch (err: any) {
+    publishProgress.value = {
+      ...publishProgress.value,
+      errorMessage: `打开页面失败：${err?.message || '系统错误'}`,
+    }
+  }
+}
+
+async function handlePublishConfluence() {
+  let unlistenProgress: null | (() => void) = null
+
+  try {
+    const configRes = await invoke<CmdResult<AppConfig>>('get_config')
+    const confluence = configRes.data?.confluence
+
+    if (!configRes.ok || !confluence) {
+      saveStatus.value = 'failure'
+      saveMessage.value = `读取 Confluence 配置失败：${configRes.error || '未知错误'}`
+      isSettingsOpen.value = true
+      return
+    }
+
+    if (!confluence.baseUrl.trim() || !confluence.username.trim() || !confluence.spaceKey.trim()) {
+      saveStatus.value = 'failure'
+      saveMessage.value = '发布到 Confluence 前请先在设置中填写地址、用户名与 Space Key'
+      isSettingsOpen.value = true
+      return
+    }
+
+    isPublishConfluenceOpen.value = true
+    publishProgress.value = {
+      active: true,
+      running: true,
+      steps: [],
+      successMessage: '',
+      errorMessage: '',
+      pageUrl: '',
+      warnings: [],
+    }
+
+    const md2cfRes = await invoke<CmdResult<Md2cfCheckResult>>('check_md2cf_installed')
+    const md2cfMessage = md2cfRes.ok && md2cfRes.data
+      ? md2cfRes.data.installed
+        ? md2cfRes.data.message
+        : '未检测到 md2cf 命令行工具，将使用内置转换引擎完成发布；如需使用 md2cf CLI 可执行 `pip install md2cf` 安装。'
+      : `md2cf 检测失败：${md2cfRes.error || '未知错误'}`
+    mergePublishProgress(
+      {
+        step: '环境检测',
+        status: 'running',
+        message: md2cfMessage,
+      },
+      { appendMessage: true },
+    )
+
+    const converted = convertMarkdownToConfluenceStorage(content.value, documentBaseDir.value)
+    const images: ConfluenceImageUpload[] = []
+    const localImageWarnings: string[] = []
+
+    for (const image of converted.images) {
+      try {
+        const asset = await readLocalImageForPublish(image.absolutePath)
+        if (asset.dataBase64) {
+          images.push({
+            filename: image.filename,
+            dataBase64: asset.dataBase64,
+          })
+        } else if (asset.skippedLarge) {
+          localImageWarnings.push(`图片过大，未上传附件：${image.originalSrc}`)
+        } else {
+          localImageWarnings.push(`读取本地图片失败：${image.originalSrc}`)
+        }
+      } catch (err: any) {
+        localImageWarnings.push(`读取本地图片失败：${image.originalSrc}（${err?.message || '未知错误'}）`)
+      }
+    }
+
+    if (localImageWarnings.length > 0) {
+      publishProgress.value = {
+        ...publishProgress.value,
+        warnings: [...publishProgress.value.warnings, ...localImageWarnings],
+      }
+    }
+
+    unlistenProgress = await listen<ConfluencePublishProgress>('confluence-publish-progress', (event) => {
+      mergePublishProgress(event.payload, { appendMessage: true })
+    })
+
+    const payload: ConfluencePublishPayload = {
+      baseUrl: confluence.baseUrl.trim(),
+      username: confluence.username.trim(),
+      spaceKey: confluence.spaceKey.trim(),
+      parentPageId: confluence.parentPageId.trim(),
+      ignoreSsl: confluence.ignoreSsl,
+      pageTitle: deriveConfluencePageTitle(filename.value),
+      storageXhtml: converted.storageXhtml,
+      images,
+    }
+
+    const result = await invoke<CmdResult<ConfluencePublishResult>>('publish_confluence', {
+      payload,
+    })
+
+    if (!result.ok || !result.data) {
+      const errorMessage = formatConfluencePublishError(result.error)
+      publishProgress.value = {
+        ...publishProgress.value,
+        active: true,
+        running: false,
+        errorMessage,
+      }
+      saveStatus.value = 'failure'
+      saveMessage.value = errorMessage
+      return
+    }
+
+    const combinedWarnings = [...publishProgress.value.warnings, ...result.data.warnings]
+    const warningSummary = combinedWarnings.length > 0 ? `（${combinedWarnings.length} 个警告）` : ''
+    publishProgress.value = {
+      ...publishProgress.value,
+      active: true,
+      running: false,
+      successMessage: `已发布到 Confluence：${deriveConfluencePageTitle(filename.value)}${warningSummary}`,
+      errorMessage: '',
+      pageUrl: result.data.pageUrl,
+      warnings: combinedWarnings,
+    }
+    saveStatus.value = 'success'
+    saveMessage.value = `已发布到 Confluence：${deriveConfluencePageTitle(filename.value)}${warningSummary}`
+  } catch (err: any) {
+    const errorMessage = formatConfluencePublishError(err?.message || String(err))
+    publishProgress.value = {
+      ...publishProgress.value,
+      active: true,
+      running: false,
+      errorMessage,
+    }
+    saveStatus.value = 'failure'
+    saveMessage.value = errorMessage
+  } finally {
+    if (unlistenProgress) {
+      unlistenProgress()
+    }
   }
 }
 
@@ -842,6 +1132,7 @@ if ((window as any).__TAURI_MOCK__) {
       @save-as-file="handleSaveAsFile"
       @export-html="handleExportHtml"
       @export-pdf="handleExportPdf"
+      @publish-confluence="handlePublishConfluence"
       @open-settings="isSettingsOpen = true"
       @select-theme="handleThemeSelect"
     />
@@ -930,6 +1221,17 @@ if ((window as any).__TAURI_MOCK__) {
       :current-path="currentSavePath"
       @close="isSettingsOpen = false"
       @update-path="onPathUpdated"
+    />
+    <PublishConfluenceModal
+      :is-open="isPublishConfluenceOpen"
+      :is-running="publishProgress.running"
+      :steps="publishProgress.steps"
+      :success-message="publishProgress.successMessage"
+      :error-message="publishProgress.errorMessage"
+      :page-url="publishProgress.pageUrl"
+      :warnings="publishProgress.warnings"
+      @close="closePublishConfluenceModal"
+      @open-page="handleOpenPublishedConfluencePage"
     />
   </div>
 </template>

@@ -7,6 +7,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             commands::ping,
             commands::init_app,
@@ -21,6 +22,7 @@ pub fn run() {
             commands::config::clear_confluence_token,
             commands::config::check_md2cf_installed,
             commands::config::test_confluence_connection,
+            commands::confluence::publish_confluence,
             commands::doc::generate_document_name,
             commands::doc::get_blank_document,
             commands::doc::read_external_document,

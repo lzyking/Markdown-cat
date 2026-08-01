@@ -35,6 +35,35 @@ export interface ConfluenceTestResult {
   statusCode?: number | null
 }
 
+export interface ConfluenceImageUpload {
+  filename: string
+  dataBase64: string
+}
+
+export interface ConfluencePublishPayload {
+  baseUrl: string
+  username: string
+  apiToken?: string
+  spaceKey: string
+  parentPageId: string
+  ignoreSsl: boolean
+  pageTitle: string
+  storageXhtml: string
+  images: ConfluenceImageUpload[]
+}
+
+export interface ConfluencePublishResult {
+  pageId: string
+  pageUrl: string
+  warnings: string[]
+}
+
+export interface ConfluencePublishProgress {
+  step: string
+  status: 'running' | 'done' | 'error'
+  message: string
+}
+
 export interface DocumentState {
   filename: string
   content: string
