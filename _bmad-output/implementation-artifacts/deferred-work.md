@@ -112,3 +112,15 @@ status: open
 - source_spec: `_bmad-output/implementation-artifacts/5-2-responsive-preview-auto-adapter.md`
   summary: PreviewPane 响应式断点下的字号（13px/13.5px/14px）以硬编码 CSS 变量覆盖形式实现，未接入项目既有的设计 token 体系。
   evidence: `src/components/PreviewPane.vue` 的 `responsiveStyle` computed 中三档字号为字面量，未引用 `DESIGN.md`/`--font-size-*` token，后续设计系统扩展断点字号时需要手动同步维护。
+- source_spec: `_bmad-output/implementation-artifacts/6-1-antigravity-color-tokens.md`
+  summary: PreviewPane.vue、SlashMenu.vue、SettingsModal.vue 中存在硬编码的深色偏向颜色（如 `rgba(255,255,255,...)` 叠加层、`--color-primary`/`--color-text-subtle` 等未纳入新 token 体系的变量），一旦 6.2 启用浅色主题切换，这些组件在浅色主题下会显示不一致。
+  evidence: 代码审查发现 `src/components/PreviewPane.vue`、`src/components/SlashMenu.vue` 使用硬编码浅色叠加层颜色值，`src/components/SettingsModal.vue` 引用了本次未纳入统一 token 体系的旧变量名。
+- source_spec: `_bmad-output/implementation-artifacts/6-1-antigravity-color-tokens.md`
+  summary: 语义色 token（`--color-success`/`--color-error`/`--color-warning`）与层级阴影/遮罩 token（`--shadow-dialog`、硬编码黑色遮罩）未随 10 套主题做差异化配色，浅色主题下可能显得突兀。
+  evidence: `src/styles/app.css` 中 success/error/warning 与 `--shadow-dialog` 仍固定为原深色方案数值，未在任何 `[data-theme=...]` 块中覆盖，AC 未强制要求但会影响浅色主题下的视觉一致性。
+- source_spec: `_bmad-output/implementation-artifacts/6-1-antigravity-color-tokens.md`
+  summary: 新增的 10 套主题色板缺少自动化对比度/视觉回归测试，后续调色或新增主题时容易再次引入低对比度问题。
+  evidence: 本轮 review 人工发现 5 个浅色主题强调色对比度低于 WCAG AA（已修复），但当前无任何测试用例覆盖对比度或视觉快照，回归依赖人工审查。
+- source_spec: `_bmad-output/implementation-artifacts/6-1-antigravity-color-tokens.md`
+  summary: 主题标识分别维护在 `src/styles/app.css` 的 CSS 选择器与 `src/lib/themes.json` 两处，缺少构建期校验确保两者一一对应，未来新增/重命名主题时容易出现拼写不一致导致主题静默失效。
+  evidence: `themes.ts` 现已对运行时字段做基本校验，但没有机制校验 `themes.json` 的每个 `id` 都存在对应的 `[data-theme="id"]` CSS 规则，反之亦然。

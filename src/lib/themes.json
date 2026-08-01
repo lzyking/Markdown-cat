@@ -1,0 +1,14 @@
+{
+  "themes": [
+    { "id": "paper-light", "name": "Paper Light", "mode": "light" },
+    { "id": "cream-warm", "name": "Cream Warm", "mode": "light" },
+    { "id": "ice-cool", "name": "Ice Cool", "mode": "light" },
+    { "id": "sand-sandstone", "name": "Sand Sandstone", "mode": "light" },
+    { "id": "nord-light", "name": "Nord Light", "mode": "light" },
+    { "id": "cyberpunk-dark", "name": "Cyberpunk Dark", "mode": "dark" },
+    { "id": "obsidian-black", "name": "Obsidian Black", "mode": "dark" },
+    { "id": "deep-void", "name": "Deep Void", "mode": "dark" },
+    { "id": "midnight-slate", "name": "Midnight Slate", "mode": "dark" },
+    { "id": "solarized-dark", "name": "Solarized Dark", "mode": "dark" }
+  ]
+}

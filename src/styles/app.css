@@ -1,28 +1,41 @@
 :root {
   /* ================================
+     主题 token（Themes）
+     为后续 data-theme 切换提供可扩展配色层
+     ================================ */
+  --bg-primary: #0D1117;
+  --bg-surface: #161B22;
+  --border-color: #30363D;
+  --text-primary: #E6EDF3;
+  --text-secondary: #8B949E;
+  --accent-color: #7DD3FC;
+  --code-bg: #1C2128;
+  --app-color-scheme: dark;
+
+  /* ================================
      颜色 token（Colors）
      设计来源：DESIGN.md
      ================================ */
-  --color-background: #0D1117;
-  --color-background-surface: #161B22;
+  --color-background: var(--bg-primary);
+  --color-background-surface: var(--bg-surface);
   --color-background-elevated: #1C2128;
 
-  --color-border: #30363D;
+  --color-border: var(--border-color);
   --color-border-subtle: #21262D;
 
-  --color-text-primary: #E6EDF3;
-  --color-text-secondary: #8B949E;
+  --color-text-primary: var(--text-primary);
+  --color-text-secondary: var(--text-secondary);
   --color-text-muted: #6E7681;
   --color-text-disabled: #484F58;
 
-  --color-accent: #7DD3FC;
+  --color-accent: var(--accent-color);
   --color-accent-foreground: #0D1117;
 
   --color-success: #3FB950;
   --color-error: #F85149;
   --color-warning: #D29922;
 
-  --color-code-background: #1C2128;
+  --color-code-background: var(--code-bg);
   --color-selection: #264F78;
 
   /* ================================
@@ -86,6 +99,180 @@
   --size-status-bar-height: 24px;
 }
 
+/* ================================
+   主题配色映射（Theme Palettes）
+   通过 data-theme 属性切换，不影响当前默认深色外观
+   ================================ */
+[data-theme='paper-light'] {
+  --bg-primary: #F7F4EA;
+  --bg-surface: #FFFDF8;
+  --border-color: #D9D1C2;
+  --text-primary: #3C352D;
+  --text-secondary: #72675A;
+  --accent-color: #8452F5;
+  --code-bg: #F1ECE0;
+  --app-color-scheme: light;
+  --color-background-elevated: #FAF7F0;
+  --color-border-subtle: #E9E1D3;
+  --color-text-muted: #8C8173;
+  --color-text-disabled: #B3A89A;
+  --color-accent-foreground: #FFFFFF;
+  --color-selection: #D9CCFF;
+}
+
+[data-theme='cream-warm'] {
+  --bg-primary: #FBF1E3;
+  --bg-surface: #FFF8EE;
+  --border-color: #DEC9AA;
+  --text-primary: #4D3B2A;
+  --text-secondary: #7C624A;
+  --accent-color: #AC5F05;
+  --code-bg: #F4E7D2;
+  --app-color-scheme: light;
+  --color-background-elevated: #FFF4E6;
+  --color-border-subtle: #EAD8BD;
+  --color-text-muted: #987C61;
+  --color-text-disabled: #BAA389;
+  --color-accent-foreground: #FFF8EE;
+  --color-selection: #FFD9A8;
+}
+
+[data-theme='ice-cool'] {
+  --bg-primary: #EEF5FB;
+  --bg-surface: #F8FBFF;
+  --border-color: #C6D9EB;
+  --text-primary: #23394D;
+  --text-secondary: #58738C;
+  --accent-color: #0A79AA;
+  --code-bg: #E5F0FA;
+  --app-color-scheme: light;
+  --color-background-elevated: #F2F8FE;
+  --color-border-subtle: #D8E5F1;
+  --color-text-muted: #7590A7;
+  --color-text-disabled: #9DB2C5;
+  --color-accent-foreground: #F8FBFF;
+  --color-selection: #BFE4FF;
+}
+
+[data-theme='sand-sandstone'] {
+  --bg-primary: #F3ECDF;
+  --bg-surface: #FBF6ED;
+  --border-color: #D1C0A7;
+  --text-primary: #42382C;
+  --text-secondary: #74634F;
+  --accent-color: #A75E32;
+  --code-bg: #EBE1D1;
+  --app-color-scheme: light;
+  --color-background-elevated: #F7F1E7;
+  --color-border-subtle: #E2D6C3;
+  --color-text-muted: #8A7A67;
+  --color-text-disabled: #AFA08C;
+  --color-accent-foreground: #FFF7EE;
+  --color-selection: #F0D5AD;
+}
+
+[data-theme='nord-light'] {
+  --bg-primary: #ECEFF4;
+  --bg-surface: #F7F9FC;
+  --border-color: #D8DEE9;
+  --text-primary: #2E3440;
+  --text-secondary: #5E677A;
+  --accent-color: #52749F;
+  --code-bg: #E5E9F0;
+  --app-color-scheme: light;
+  --color-background-elevated: #F1F4F8;
+  --color-border-subtle: #E4E8EF;
+  --color-text-muted: #6B7486;
+  --color-text-disabled: #98A2B3;
+  --color-accent-foreground: #F7F9FC;
+  --color-selection: #CDDBF0;
+}
+
+[data-theme='cyberpunk-dark'] {
+  --bg-primary: #0B1020;
+  --bg-surface: #131A2E;
+  --border-color: #2A3558;
+  --text-primary: #F5F7FF;
+  --text-secondary: #92A0D1;
+  --accent-color: #FF5FD2;
+  --code-bg: #10172A;
+  --app-color-scheme: dark;
+  --color-background-elevated: #18203A;
+  --color-border-subtle: #202A48;
+  --color-text-muted: #6D79A8;
+  --color-text-disabled: #4A557D;
+  --color-accent-foreground: #2A0A22;
+  --color-selection: #3A214A;
+}
+
+[data-theme='obsidian-black'] {
+  --bg-primary: #0A0C10;
+  --bg-surface: #12161C;
+  --border-color: #262C35;
+  --text-primary: #F2F4F8;
+  --text-secondary: #97A1AF;
+  --accent-color: #8AB4F8;
+  --code-bg: #10141B;
+  --app-color-scheme: dark;
+  --color-background-elevated: #171C24;
+  --color-border-subtle: #1D232D;
+  --color-text-muted: #737D8C;
+  --color-text-disabled: #515966;
+  --color-accent-foreground: #081018;
+  --color-selection: #1A2C46;
+}
+
+[data-theme='deep-void'] {
+  --bg-primary: #070B12;
+  --bg-surface: #0F1622;
+  --border-color: #22314A;
+  --text-primary: #E7EEFB;
+  --text-secondary: #8AA0C2;
+  --accent-color: #7C3AED;
+  --code-bg: #0D1420;
+  --app-color-scheme: dark;
+  --color-background-elevated: #131C2C;
+  --color-border-subtle: #1A2740;
+  --color-text-muted: #6F84A7;
+  --color-text-disabled: #4A5E80;
+  --color-accent-foreground: #F5EFFF;
+  --color-selection: #2A1F4D;
+}
+
+[data-theme='midnight-slate'] {
+  --bg-primary: #0D1117;
+  --bg-surface: #161B22;
+  --border-color: #30363D;
+  --text-primary: #E6EDF3;
+  --text-secondary: #8B949E;
+  --accent-color: #7DD3FC;
+  --code-bg: #1C2128;
+  --app-color-scheme: dark;
+  --color-background-elevated: #1C2128;
+  --color-border-subtle: #21262D;
+  --color-text-muted: #6E7681;
+  --color-text-disabled: #484F58;
+  --color-accent-foreground: #0D1117;
+  --color-selection: #264F78;
+}
+
+[data-theme='solarized-dark'] {
+  --bg-primary: #002B36;
+  --bg-surface: #073642;
+  --border-color: #214B56;
+  --text-primary: #EEE8D5;
+  --text-secondary: #93A1A1;
+  --accent-color: #2AA198;
+  --code-bg: #062F39;
+  --app-color-scheme: dark;
+  --color-background-elevated: #0B3A46;
+  --color-border-subtle: #113944;
+  --color-text-muted: #6C8B91;
+  --color-text-disabled: #4E6A70;
+  --color-accent-foreground: #001F27;
+  --color-selection: #124B58;
+}
+
 /* 全局盒模型重置 */
 * {
   box-sizing: border-box;
@@ -104,8 +291,7 @@ body,
   line-height: var(--line-height-relaxed);
   color: var(--color-text-primary);
   background: var(--color-background);
-  /* MVP 阶段仅支持深色模式，显式强制暗色配色方案，避免跟随系统浅色模式 */
-  color-scheme: dark;
+  color-scheme: var(--app-color-scheme);
 }
 
 body {
