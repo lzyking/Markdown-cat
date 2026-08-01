@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { convertFileSrc } from '@tauri-apps/api/core'
 import { renderMarkdown } from '../lib/markdown'
 import { isRelativeAssetPath, resolveRelativeAssetPath } from '../lib/image-assets'
+import { decoratePreviewHtml, getResponsivePreviewStyle, resolveResponsiveLayout, type PreviewLayout } from '../lib/preview'
 
 const props = defineProps<{
   content: string
@@ -13,8 +14,6 @@ const emit = defineEmits<{
   (e: 'toggle-task', index: number): void
 }>()
 
-type PreviewLayout = 'compact' | 'regular' | 'wide'
-
 const previewPaneRef = ref<HTMLElement | null>(null)
 const containerWidth = ref(0)
 const responsiveLayout = ref<PreviewLayout>('wide')
@@ -23,59 +22,17 @@ let resizeObserver: ResizeObserver | null = null
 let resizeRafId: number | null = null
 let pendingObservedWidth = 0
 
-function decorateRenderedHtml(rawHtml: string): string {
-  if (!rawHtml) {
-    return ''
-  }
-
-  const parser = new DOMParser()
-  const doc = parser.parseFromString(`<div id="preview-root">${rawHtml}</div>`, 'text/html')
-  const root = doc.getElementById('preview-root')
-
-  if (!root) {
-    return rawHtml
-  }
-
-  root.querySelectorAll('table').forEach((table) => {
-    if (table.parentElement?.classList.contains('preview-table-scroll')) {
-      return
-    }
-
-    if (!table.parentNode) {
-      return
-    }
-
-    const wrapper = doc.createElement('div')
-    wrapper.className = 'preview-table-scroll'
-    table.parentNode.insertBefore(wrapper, table)
-    wrapper.appendChild(table)
-  })
-
-  if (props.documentBaseDir) {
-    root.querySelectorAll('img').forEach((image) => {
-      const source = image.getAttribute('src')
-      if (!source || !isRelativeAssetPath(source)) {
-        return
+function renderPreviewHtml(rawHtml: string): string {
+  return decoratePreviewHtml(rawHtml, {
+    transformImageSrc: (source) => {
+      if (!props.documentBaseDir || !isRelativeAssetPath(source)) {
+        return null
       }
 
-      const absolutePath = resolveRelativeAssetPath(props.documentBaseDir!, source)
-      image.setAttribute('src', convertFileSrc(absolutePath))
-    })
-  }
-
-  return root.innerHTML
-}
-
-function resolveResponsiveLayout(width: number): PreviewLayout {
-  if (width <= 420) {
-    return 'compact'
-  }
-
-  if (width <= 640) {
-    return 'regular'
-  }
-
-  return 'wide'
+      const absolutePath = resolveRelativeAssetPath(props.documentBaseDir, source)
+      return convertFileSrc(absolutePath)
+    },
+  })
 }
 
 function applyResponsiveLayout(width: number) {
@@ -97,30 +54,10 @@ function scheduleResponsiveLayout(width: number) {
 }
 
 const renderResult = computed(() => renderMarkdown(props.content))
-const html = computed(() => decorateRenderedHtml(renderResult.value.html))
+const html = computed(() => renderPreviewHtml(renderResult.value.html))
 const currentTaskNonce = computed(() => renderResult.value.taskNonce)
 const isEmpty = computed(() => !props.content || props.content.trim() === '')
-const responsiveStyle = computed<Record<string, string>>(() => {
-  const layoutStyles: Record<PreviewLayout, Record<string, string>> = {
-    compact: {
-      '--preview-body-font-size': '13px',
-      '--preview-heading-font-size': '16px',
-      '--preview-padding': '16px',
-    },
-    regular: {
-      '--preview-body-font-size': '13.5px',
-      '--preview-heading-font-size': '17px',
-      '--preview-padding': '18px',
-    },
-    wide: {
-      '--preview-body-font-size': '14px',
-      '--preview-heading-font-size': '18px',
-      '--preview-padding': '20px',
-    },
-  }
-
-  return layoutStyles[responsiveLayout.value]
-})
+const responsiveStyle = computed<Record<string, string>>(() => getResponsivePreviewStyle(responsiveLayout.value))
 
 // TODO: i18n — extract to locale key (e.g. 'preview.emptyState')
 const EMPTY_STATE_TEXT = '开始输入 Markdown，右侧将实时预览。'

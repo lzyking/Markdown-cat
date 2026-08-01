@@ -9,6 +9,7 @@ import { test as base, type Page } from '@playwright/test'
 async function injectMocks(page: Page) {
   await page.addInitScript(() => {
     const invocations: Array<{ command: string; args: unknown }> = []
+    const dialogInvocations: Array<{ method: 'open' | 'save'; options: unknown }> = []
     const handlers: Record<string, (args: unknown) => unknown> = {
       ping: () => 'pong',
       init_app: () => ({ ok: true }),
@@ -37,6 +38,17 @@ async function injectMocks(page: Page) {
           },
         }
       },
+      save_document_as: (args: any) => {
+        const targetPath = args?.targetPath || '/tmp/markdown-cat-test/New_Document.md'
+        const pathSegments = String(targetPath).split(/[/\\]/)
+        return {
+          ok: true,
+          data: {
+            filename: pathSegments[pathSegments.length - 1] || 'New_Document.md',
+            path: targetPath,
+          },
+        }
+      },
       save_image_asset: (args: any) => {
         const dir = args?.targetDir || '/tmp/markdown-cat-test/assets'
         const fn = args?.filename || 'img_test.png'
@@ -49,6 +61,15 @@ async function injectMocks(page: Page) {
         }
       },
       copy_asset_file: () => ({ ok: true, data: { migrated: true } }),
+      read_image_asset: () => ({
+        ok: true,
+        data: {
+          mimeType: 'image/png',
+          sizeBytes: 4,
+          dataBase64: 'iVBORw0KGgo=',
+          skippedLarge: false,
+        },
+      }),
     }
 
     const w = window as any
@@ -61,11 +82,24 @@ async function injectMocks(page: Page) {
         }
         return handler(args)
       },
+      dialog: {
+        open: async (options?: unknown) => {
+          dialogInvocations.push({ method: 'open', options })
+          return w.__TAURI_MOCK_OPEN_DIALOG_RESULT__ ?? null
+        },
+        save: async (options?: unknown) => {
+          dialogInvocations.push({ method: 'save', options })
+          return w.__TAURI_MOCK_SAVE_DIALOG_RESULT__ ?? null
+        },
+      },
       __registerHandler: (command: string, handler: (args: unknown) => unknown) => {
         handlers[command] = handler
       },
       get invocations() {
         return invocations
+      },
+      get dialogInvocations() {
+        return dialogInvocations
       },
     }
     w.__TAURI__ = w.__TAURI_MOCK__

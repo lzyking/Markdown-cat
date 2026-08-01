@@ -24,3 +24,10 @@ export interface ClipboardImagePayload {
   mimeType: 'image/png' | 'image/jpeg'
   bytes: number[]
 }
+
+export interface ReadImageAssetResult {
+  mimeType: string
+  sizeBytes: number
+  dataBase64?: string | null
+  skippedLarge?: boolean
+}

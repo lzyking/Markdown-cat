@@ -1,6 +1,7 @@
 use crate::commands::CmdResult;
 use crate::config;
 use crate::doc;
+use base64::Engine as _;
 
 /// 前端文档初始状态。
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
@@ -59,6 +60,80 @@ pub struct SaveResult {
 pub struct ImageSaveResult {
     pub filename: String,
     pub path: String,
+}
+
+/// 本地图片读取结果。
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ReadImageAssetResult {
+    pub mime_type: String,
+    pub size_bytes: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data_base64: Option<String>,
+    pub skipped_large: bool,
+}
+
+fn guess_image_mime_type(path: &std::path::Path) -> String {
+    match path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "svg" => "image/svg+xml",
+        "bmp" => "image/bmp",
+        "ico" => "image/x-icon",
+        "avif" => "image/avif",
+        "tif" | "tiff" => "image/tiff",
+        _ => "application/octet-stream",
+    }
+    .to_string()
+}
+
+/// 仅允许已知的图片扩展名被 `read_image_asset` 读取。
+/// 导出功能会跟随 Markdown 中的绝对路径读取任意本地文件，
+/// 若不做扩展名白名单校验，攻击者可构造一个指向任意本地文件
+/// （如 `/etc/passwd`）的 `![](/etc/passwd)` 图片引用，
+/// 借助导出流程把文件内容当作“图片”窃取进导出的 HTML 中。
+fn is_supported_image_extension(path: &std::path::Path) -> bool {
+    matches!(
+        path.extension()
+            .and_then(|ext| ext.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase()
+            .as_str(),
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" | "bmp" | "ico" | "avif" | "tif" | "tiff"
+    )
+}
+
+/// 通过文件内容的魔数（magic bytes）二次确认其确实是图片格式，
+/// 而不仅仅依赖可被伪造的扩展名，进一步防止任意文件被伪装成图片读取。
+/// SVG 是纯文本格式没有统一魔数，仅做扩展名白名单校验（且预览已对危险 HTML 做过滤）。
+fn looks_like_image_content(path: &std::path::Path, bytes: &[u8]) -> bool {
+    let extension = path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if extension == "svg" {
+        return true;
+    }
+    match bytes {
+        [0x89, 0x50, 0x4e, 0x47, ..] => true,                          // PNG
+        [0xff, 0xd8, 0xff, ..] => true,                                // JPEG
+        [0x47, 0x49, 0x46, 0x38, ..] => true,                          // GIF87a/89a
+        [0x42, 0x4d, ..] => true,                                      // BMP
+        [0x00, 0x00, 0x01, 0x00, ..] => true,                          // ICO
+        b if b.len() >= 12 && &b[0..4] == b"RIFF" && &b[8..12] == b"WEBP" => true,
+        b if b.len() >= 12 && &b[4..8] == b"ftyp" => true,             // AVIF/HEIF family
+        b if b.len() >= 4 && (&b[0..2] == b"II" || &b[0..2] == b"MM") => true, // TIFF
+        _ => false,
+    }
 }
 
 /// 保存 Markdown 文档。
@@ -163,6 +238,50 @@ pub fn save_document_as(app_handle: tauri::AppHandle, target_path: String, conte
             })
         }
         Err(e) => CmdResult::failure(format!("ERR_SAVE_FAILED: {}", e)),
+    }
+}
+
+/// 读取用于 HTML 导出的本地图片。超过给定大小限制时仅返回元数据，不回传 base64 内容。
+#[tauri::command]
+pub fn read_image_asset(path: String, max_inline_size_bytes: Option<u64>) -> CmdResult<ReadImageAssetResult> {
+    let image_path = std::path::Path::new(&path);
+    if !image_path.exists() || !image_path.is_file() {
+        return CmdResult::failure("ERR_FILE_NOT_FOUND".to_string());
+    }
+    if !is_supported_image_extension(image_path) {
+        return CmdResult::failure("ERR_UNSUPPORTED_IMAGE_TYPE".to_string());
+    }
+
+    let metadata = match std::fs::metadata(image_path) {
+        Ok(metadata) => metadata,
+        Err(e) => return CmdResult::failure(format!("ERR_READ_FILE_FAILED: {}", e)),
+    };
+    let size_bytes = metadata.len();
+    let mime_type = guess_image_mime_type(image_path);
+    let max_inline_size_bytes = max_inline_size_bytes.unwrap_or(10 * 1024 * 1024);
+
+    if size_bytes > max_inline_size_bytes {
+        return CmdResult::success(ReadImageAssetResult {
+            mime_type,
+            size_bytes,
+            data_base64: None,
+            skipped_large: true,
+        });
+    }
+
+    match std::fs::read(image_path) {
+        Ok(bytes) => {
+            if !looks_like_image_content(image_path, &bytes) {
+                return CmdResult::failure("ERR_UNSUPPORTED_IMAGE_TYPE".to_string());
+            }
+            CmdResult::success(ReadImageAssetResult {
+                mime_type,
+                size_bytes,
+                data_base64: Some(base64::engine::general_purpose::STANDARD.encode(bytes)),
+                skipped_large: false,
+            })
+        }
+        Err(e) => CmdResult::failure(format!("ERR_READ_FILE_FAILED: {}", e)),
     }
 }
 

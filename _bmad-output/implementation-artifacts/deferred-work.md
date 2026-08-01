@@ -192,3 +192,12 @@ source_spec: `7-2-clipboard-image-paste-and-local-storage.md`
 severity: low
 reason: The follow-up-review damping cap (limits.max_followup_reviews = 1) was spent with the story finalized (status: done, verify green) while the review pass still recommended an independent follow-up. The work was committed by bmad-loop run 20260801-121843-460e; this entry preserves the lingering recommendation for a deliberate later review.
 status: open
+- source_spec: `_bmad-output/implementation-artifacts/8-1-export-self-contained-html.md`
+  summary: 应用启动时自动恢复上次编辑文件（`read_external_document`）成功后未设置 `currentFilePath`，导致该会话内自动保存、"另存为"默认目录，以及新导出的 HTML 默认文件名/相对图片解析目录都基于错误的基准目录，直到用户手动执行一次"另存为"或"打开文件"为止。
+  evidence: `src/App.vue` 的 `onMounted` 恢复分支（约第 634-644 行）在 `read_external_document` 成功后只设置了 `filename`/`content`/`saveStatus`，从未写入 `currentFilePath.value`；对照 `openFile` 处理函数（约第 300 行）在同样调用 `read_external_document` 后会显式 `currentFilePath.value = filePath`。该缺口在本故事（8-1 导出 HTML）之前就已存在于自动保存路径解析中，因导出功能同样依赖 `documentBaseDir`/`currentFilePath` 而被本轮评审发现。
+- source_spec: `_bmad-output/implementation-artifacts/8-1-export-self-contained-html.md`
+  summary: 应用启动时自动恢复上次编辑文件（`read_external_document`）成功后未设置 `currentFilePath`，导致该会话内自动保存、"另存为"默认目录，以及 HTML 导出默认文件名/相对图片解析目录都基于错误的基准目录，直到用户手动执行一次"另存为"或"打开文件"为止。
+  evidence: `src/App.vue` 的 `onMounted` 恢复分支在 `read_external_document` 成功后只设置了 `filename`/`content`/`saveStatus`，从未写入 `currentFilePath.value`；对照 `openFile` 处理函数在同样调用 `read_external_document` 后会显式 `currentFilePath.value = filePath`。该缺口在本故事之前已存在于自动保存路径解析中（在 7-2、8-1 两轮评审中被独立复现），本轮 8-1 复审再次确认该问题依旧未修复。
+- source_spec: `_bmad-output/implementation-artifacts/8-1-export-self-contained-html.md`
+  summary: HTML 导出复用 `save_document_as` 命令写入导出文件，该命令写入成功后会顺带放宽导出目标目录的 `asset://` 协议可访问范围，而导出的独立 HTML 文件本身并不依赖该协议渲染图片，属于非预期的权限面扩大副作用。
+  evidence: `src-tauri/src/commands/doc.rs` 的 `save_document_as` 在写入成功后无条件调用 `app_handle.asset_protocol_scope().allow_directory(parent, true)`；`handleExportHtml()`（`src/App.vue`）为写出导出的 HTML 复用了这一命令，导致用户选择的任意导出目录都会被动加入 asset 协议白名单，即使该目录内没有、也不需要通过 `asset://` 访问的图片资源，扩大了运行时文件访问面且未在 AC 中被要求。

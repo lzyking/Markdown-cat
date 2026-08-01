@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
-import { open, save } from '@tauri-apps/plugin-dialog'
 import TitleBar from './components/TitleBar.vue'
 import MenuBar from './components/MenuBar.vue'
 import StatusBar from './components/StatusBar.vue'
@@ -11,7 +10,9 @@ import SettingsModal from './components/SettingsModal.vue'
 import SlashMenu, { type SlashMenuItem } from './components/SlashMenu.vue'
 import type { CursorPosition } from './components/SourceEditor.vue'
 import { applyTheme, getActiveThemeId } from './lib/theme'
+import { renderMarkdown } from './lib/markdown'
 import { getResolvedThemeId } from './lib/themes'
+import { exportSelfContainedHtml, isHtmlExportCancelledError, type ExportImageWarning } from './lib/export-html'
 import {
   extractAssetReferences,
   extractSiblingImageReferences,
@@ -19,7 +20,8 @@ import {
   getParentDirectory,
   joinFilePath,
 } from './lib/image-assets'
-import type { AppConfig, ClipboardImagePayload, DocumentState, CmdResult, SaveResult } from './lib/types'
+import { openDialog, saveDialog } from './lib/tauri-dialog'
+import type { AppConfig, ClipboardImagePayload, DocumentState, CmdResult, ReadImageAssetResult, SaveResult } from './lib/types'
 
 const filename = ref('New_*.md')
 const content = ref('')
@@ -29,6 +31,7 @@ const sourceEditorRef = ref<any>(null)
 // 可拖动分栏
 const containerRef = ref<HTMLElement | null>(null)
 const splitterRef = ref<HTMLElement | null>(null)
+const previewPaneSectionRef = ref<HTMLElement | null>(null)
 const leftWidth = ref<number>(0)
 let isDragging = false
 let isManuallyResized = false
@@ -47,14 +50,36 @@ const activeThemeId = ref(getActiveThemeId())
 
 // 保存状态管理
 type SaveStatus = 'unsaved' | 'success' | 'failure'
+interface ExportProgressState {
+  active: boolean
+  current: number
+  total: number
+  message: string
+  warnings: ExportImageWarning[]
+}
+
 const saveStatus = ref<SaveStatus>('unsaved')
 const saveMessage = ref('')
+const exportProgress = ref<ExportProgressState>({
+  active: false,
+  current: 0,
+  total: 0,
+  message: '',
+  warnings: [],
+})
 
 const statusBarStatus = computed(() =>
   saveStatus.value === 'unsaved' ? 'normal' : saveStatus.value
 )
+const exportProgressPercent = computed(() => {
+  if (!exportProgress.value.active) return 0
+  if (exportProgress.value.total === 0) return 100
+  return Math.min(100, Math.round((exportProgress.value.current / exportProgress.value.total) * 100))
+})
+const visibleExportWarnings = computed(() => exportProgress.value.warnings.slice(-3))
 
 let autoSaveTimer: number | null = null
+let exportAbortController: AbortController | null = null
 
 function formatSaveError(rawError?: string): string {
   if (!rawError) return '保存失败：未知错误'
@@ -68,6 +93,126 @@ function formatSaveError(rawError?: string): string {
 
 const currentFilePath = ref<string | null>(null)
 const documentBaseDir = computed(() => getParentDirectory(currentFilePath.value) ?? currentSavePath.value ?? null)
+
+function resetExportProgress() {
+  exportProgress.value = {
+    active: false,
+    current: 0,
+    total: 0,
+    message: '',
+    warnings: [],
+  }
+}
+
+function updateExportProgress(next: Partial<ExportProgressState>) {
+  exportProgress.value = {
+    ...exportProgress.value,
+    ...next,
+  }
+}
+
+function cancelHtmlExport() {
+  exportAbortController?.abort()
+}
+
+function deriveHtmlExportFilename(sourceFilename: string): string {
+  const trimmedFilename = sourceFilename.trim() || 'Untitled.md'
+  // Only strip a recognized document extension — a bare `\.[^.]+$` match would
+  // also clip non-extension trailing dot-segments (e.g. "Release 1.0" would
+  // wrongly become "Release 1.html").
+  if (/\.(md|markdown|txt)$/i.test(trimmedFilename)) {
+    return trimmedFilename.replace(/\.(md|markdown|txt)$/i, '.html')
+  }
+  return `${trimmedFilename}.html`
+}
+
+function deriveHtmlExportDefaultPath(): string {
+  const exportFilename = deriveHtmlExportFilename(filename.value)
+  const baseDir = getParentDirectory(currentFilePath.value) ?? currentSavePath.value
+  return baseDir ? joinFilePath(baseDir, exportFilename) : exportFilename
+}
+
+function getPreviewExportWidth(): number {
+  return previewPaneSectionRef.value?.clientWidth ?? containerRef.value?.clientWidth ?? 960
+}
+
+async function readLocalImageForExport(absolutePath: string) {
+  const result = await invoke<CmdResult<ReadImageAssetResult>>('read_image_asset', {
+    path: absolutePath,
+    maxInlineSizeBytes: 10 * 1024 * 1024,
+  })
+
+  if (!result.ok || !result.data) {
+    throw new Error(result.error || 'ERR_READ_FILE_FAILED')
+  }
+
+  return result.data
+}
+
+async function handleExportHtml() {
+  try {
+    const target = await saveDialog({
+      defaultPath: deriveHtmlExportDefaultPath(),
+      filters: [{ name: 'HTML', extensions: ['html'] }],
+    })
+
+    if (!target || typeof target !== 'string') {
+      return
+    }
+
+    const renderResult = renderMarkdown(content.value)
+    exportAbortController = new AbortController()
+    exportProgress.value = {
+      active: true,
+      current: 0,
+      total: 0,
+      message: '正在准备导出内容…',
+      warnings: [],
+    }
+
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+
+    const exported = await exportSelfContainedHtml({
+      markdownHtml: renderResult.html,
+      title: deriveHtmlExportFilename(filename.value),
+      themeId: activeThemeId.value,
+      previewWidth: getPreviewExportWidth(),
+      documentBaseDir: documentBaseDir.value,
+      readLocalImage: async (absolutePath) => readLocalImageForExport(absolutePath),
+      signal: exportAbortController.signal,
+      onProgress: (progress) => {
+        updateExportProgress(progress)
+      },
+    })
+
+    const saveResult = await invoke<CmdResult<SaveResult>>('save_document_as', {
+      targetPath: target,
+      content: exported.html,
+    })
+
+    if (!saveResult.ok || !saveResult.data) {
+      saveStatus.value = 'failure'
+      saveMessage.value = `导出 HTML 失败：${saveResult.error || '写入失败'}`
+      return
+    }
+
+    const warningSummary = exported.warnings.length > 0 ? `（${exported.warnings.length} 个警告）` : ''
+    saveStatus.value = 'success'
+    saveMessage.value = `已导出 HTML：${saveResult.data.filename}${warningSummary}`
+  } catch (err: any) {
+    if (isHtmlExportCancelledError(err) || exportAbortController?.signal.aborted) {
+      saveStatus.value = 'failure'
+      saveMessage.value = 'HTML 导出已取消'
+    } else {
+      saveStatus.value = 'failure'
+      saveMessage.value = `导出 HTML 失败：${err?.message || err}`
+      console.error('Export HTML error:', err)
+    }
+  } finally {
+    exportAbortController = null
+    resetExportProgress()
+  }
+}
 
 function triggerDebouncedAutoSave(newContent: string) {
   if (autoSaveTimer !== null) {
@@ -176,7 +321,7 @@ async function loadFileFromPath(filePath: string) {
 
 async function handleOpenFile() {
   try {
-    const selected = await open({
+    const selected = await openDialog({
       multiple: false,
       filters: [{ name: 'Markdown Document', extensions: ['md', 'markdown', 'txt'] }],
     })
@@ -212,7 +357,7 @@ async function handleSaveAsFile() {
     // every sibling image link in its content.
     const priorDocDir = !wasUnsaved ? getParentDirectory(currentFilePath.value) : null
 
-    const target = await save({
+    const target = await saveDialog({
       defaultPath,
       filters: [{ name: 'Markdown Document', extensions: ['md', 'markdown', 'txt'] }],
     })
@@ -582,6 +727,7 @@ if ((window as any).__TAURI_MOCK__) {
       :active-theme-id="activeThemeId"
       @open-file="handleOpenFile"
       @save-as-file="handleSaveAsFile"
+      @export-html="handleExportHtml"
       @open-settings="isSettingsOpen = true"
       @select-theme="handleThemeSelect"
     />
@@ -608,6 +754,7 @@ if ((window as any).__TAURI_MOCK__) {
         @dblclick="resetWidths"
       />
       <section
+        ref="previewPaneSectionRef"
         class="editor-pane preview-pane"
         :style="{ width: leftWidth > 0 ? `calc(100% - ${leftWidth}px - ${SPLITTER_WIDTH}px)` : `calc(50% - ${SPLITTER_WIDTH / 2}px)` }"
       >
@@ -624,6 +771,32 @@ if ((window as any).__TAURI_MOCK__) {
       :message="saveMessage"
       :status="statusBarStatus"
     />
+
+    <div v-if="exportProgress.active" class="export-progress-overlay" role="dialog" aria-modal="true" aria-label="导出 HTML 进度">
+      <div class="export-progress-modal">
+        <div class="export-progress-title">正在导出 HTML</div>
+        <div class="export-progress-message">{{ exportProgress.message }}</div>
+        <div class="export-progress-bar">
+          <div class="export-progress-bar-fill" :style="{ width: `${exportProgressPercent}%` }" />
+        </div>
+        <div class="export-progress-meta">
+          {{ exportProgress.total === 0 ? '处理中…' : `${exportProgress.current} / ${exportProgress.total}` }}
+        </div>
+        <div v-if="visibleExportWarnings.length > 0" class="export-progress-warnings">
+          <div class="export-progress-warning-title">警告（{{ exportProgress.warnings.length }}）</div>
+          <div
+            v-for="warning in visibleExportWarnings"
+            :key="`${warning.kind}-${warning.src}`"
+            class="export-progress-warning"
+          >
+            {{ warning.message }}
+          </div>
+        </div>
+        <div class="export-progress-actions">
+          <button type="button" class="export-progress-button" @click="cancelHtmlExport">取消导出</button>
+        </div>
+      </div>
+    </div>
 
     <SlashMenu
       v-if="isSlashMenuOpen"
@@ -689,5 +862,93 @@ if ((window as any).__TAURI_MOCK__) {
 
 .editor-splitter:hover {
   background: var(--color-accent);
+}
+
+.export-progress-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.32);
+  z-index: 40;
+}
+
+.export-progress-modal {
+  width: min(420px, calc(100vw - 32px));
+  padding: var(--spacing-lg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--rounded-lg);
+  background: var(--color-background-elevated);
+  box-shadow: var(--shadow-dialog);
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+.export-progress-title {
+  font-size: var(--font-size-heading);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+}
+
+.export-progress-message,
+.export-progress-meta {
+  font-size: var(--font-size-body);
+  color: var(--color-text-secondary);
+}
+
+.export-progress-bar {
+  width: 100%;
+  height: 8px;
+  overflow: hidden;
+  border-radius: var(--rounded-full);
+  background: var(--color-background-surface);
+}
+
+.export-progress-bar-fill {
+  height: 100%;
+  background: var(--color-accent);
+  transition: width 120ms ease;
+}
+
+.export-progress-warnings {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+  padding: var(--spacing-sm);
+  border-radius: var(--rounded-md);
+  background: rgba(210, 153, 34, 0.12);
+}
+
+.export-progress-warning-title {
+  font-size: var(--font-size-label);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+}
+
+.export-progress-warning {
+  font-size: var(--font-size-label);
+  color: var(--color-text-secondary);
+}
+
+.export-progress-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: var(--spacing-xs);
+}
+
+.export-progress-button {
+  border: 1px solid var(--color-border);
+  border-radius: var(--rounded-md);
+  background: var(--color-background-surface);
+  color: var(--color-text-primary);
+  font: inherit;
+  padding: var(--spacing-xs) var(--spacing-md);
+  cursor: pointer;
+}
+
+.export-progress-button:hover {
+  background: var(--color-background);
 }
 </style>

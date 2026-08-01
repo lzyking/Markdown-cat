@@ -18,6 +18,7 @@ pub fn run() {
             commands::doc::generate_document_name,
             commands::doc::get_blank_document,
             commands::doc::read_external_document,
+            commands::doc::read_image_asset,
             commands::doc::save_document,
             commands::doc::save_document_as,
             commands::doc::save_image_asset,

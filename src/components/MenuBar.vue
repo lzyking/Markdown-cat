@@ -8,6 +8,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'open-file'): void
   (e: 'save-as-file'): void
+  (e: 'export-html'): void
   (e: 'open-settings'): void
   (e: 'select-theme', themeId: string): void
 }>()
@@ -21,6 +22,10 @@ function openFile() {
 
 function saveAsFile() {
   emit('save-as-file')
+}
+
+function exportHtml() {
+  emit('export-html')
 }
 
 function openSettings() {
@@ -45,6 +50,7 @@ function selectTheme(themeId: string) {
       <div class="menu-dropdown">
         <div class="menu-row" role="menuitem" @click="openFile">打开文件 (Open)…</div>
         <div class="menu-row" role="menuitem" @click="saveAsFile">另存为 (Save As)…</div>
+        <div class="menu-row" role="menuitem" @click="exportHtml">导出为 HTML (Export as HTML)…</div>
         <div class="menu-divider"></div>
         <div class="menu-row submenu-trigger" role="menuitem" aria-haspopup="true">
           <span>Theme</span>
