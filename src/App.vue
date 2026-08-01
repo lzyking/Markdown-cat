@@ -10,7 +10,9 @@ import PreviewPane from './components/PreviewPane.vue'
 import SettingsModal from './components/SettingsModal.vue'
 import SlashMenu, { type SlashMenuItem } from './components/SlashMenu.vue'
 import type { CursorPosition } from './components/SourceEditor.vue'
-import { DocumentState, CmdResult, SaveResult } from './lib/types'
+import { applyTheme, getActiveThemeId } from './lib/theme'
+import { getResolvedThemeId } from './lib/themes'
+import type { AppConfig, DocumentState, CmdResult, SaveResult } from './lib/types'
 
 const filename = ref('New_*.md')
 const content = ref('')
@@ -34,6 +36,7 @@ const slashMenuPosition = ref({ top: 0, left: 0 })
 // Settings Modal 状态
 const isSettingsOpen = ref(false)
 const currentSavePath = ref('')
+const activeThemeId = ref(getActiveThemeId())
 
 // 保存状态管理
 type SaveStatus = 'unsaved' | 'success' | 'failure'
@@ -115,6 +118,31 @@ function onPathUpdated(newPath: string) {
   currentSavePath.value = newPath
   saveStatus.value = 'success'
   saveMessage.value = '保存路径已更新'
+}
+
+async function handleThemeSelect(themeId: string) {
+  const previousThemeId = activeThemeId.value
+  const resolvedThemeId = applyTheme(themeId)
+  activeThemeId.value = resolvedThemeId
+
+  try {
+    const res = await invoke<CmdResult<null>>('set_config', {
+      themeId: resolvedThemeId,
+    })
+    if (!res.ok) {
+      activeThemeId.value = applyTheme(previousThemeId)
+      saveStatus.value = 'failure'
+      saveMessage.value = `主题保存失败：${res.error || '未知错误'}`
+      return
+    }
+
+    saveStatus.value = 'success'
+    saveMessage.value = `主题已切换为 ${resolvedThemeId}`
+  } catch (err: any) {
+    activeThemeId.value = applyTheme(previousThemeId)
+    saveStatus.value = 'failure'
+    saveMessage.value = `主题保存异常：${err?.message || '系统错误'}`
+  }
 }
 
 async function loadFileFromPath(filePath: string) {
@@ -308,7 +336,7 @@ function onWindowResize() {
 
 onMounted(async () => {
   try {
-    const configRes = await invoke<CmdResult<{ savePath: string | null; lastOpenedFile: string | null }>>('get_config')
+    const configRes = await invoke<CmdResult<AppConfig>>('get_config')
     let lastFileLoaded = false
 
     if (configRes.ok && configRes.data) {
@@ -388,6 +416,12 @@ if ((window as any).__TAURI_MOCK__) {
   ;(window as any).__GET_CURRENT_SAVE_PATH__ = () => {
     return currentSavePath.value
   }
+  ;(window as any).__GET_ACTIVE_THEME_ID__ = () => {
+    return activeThemeId.value
+  }
+  ;(window as any).__SET_THEME__ = async (themeId: string) => {
+    await handleThemeSelect(getResolvedThemeId(themeId))
+  }
 }
 </script>
 
@@ -399,9 +433,11 @@ if ((window as any).__TAURI_MOCK__) {
   >
     <TitleBar :filename="filename" :save-status="saveStatus" />
     <MenuBar
+      :active-theme-id="activeThemeId"
       @open-file="handleOpenFile"
       @save-as-file="handleSaveAsFile"
       @open-settings="isSettingsOpen = true"
+      @select-theme="handleThemeSelect"
     />
     <main ref="containerRef" class="editor-workspace">
       <section

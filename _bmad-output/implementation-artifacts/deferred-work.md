@@ -124,3 +124,24 @@ status: open
 - source_spec: `_bmad-output/implementation-artifacts/6-1-antigravity-color-tokens.md`
   summary: 主题标识分别维护在 `src/styles/app.css` 的 CSS 选择器与 `src/lib/themes.json` 两处，缺少构建期校验确保两者一一对应，未来新增/重命名主题时容易出现拼写不一致导致主题静默失效。
   evidence: `themes.ts` 现已对运行时字段做基本校验，但没有机制校验 `themes.json` 的每个 `id` 都存在对应的 `[data-theme="id"]` CSS 规则，反之亦然。
+- source_spec: `_bmad-output/implementation-artifacts/6-2-file-menu-theme-selector.md`
+  summary: `set_config` 的读-改-写模式没有加锁，近乎同时的两次调用（例如切换主题与更改保存路径）可能互相覆盖对方写入的字段。
+  evidence: `src-tauri/src/commands/config.rs` 中 `set_config`/`update_last_opened_file` 各自独立 `read_config` → 修改内存结构体 → `write_config`，无文件锁或原子合并，属于 4.x 系列引入的既有模式，本次仅新增 `theme_id` 字段沿用了该模式。
+- source_spec: `_bmad-output/implementation-artifacts/6-2-file-menu-theme-selector.md`
+  summary: File 菜单及其新增的 Theme 子菜单仅能通过鼠标 `:hover`/`:focus-within` 展开，纯键盘用户无法聚焦并展开该子菜单或其中任一主题项。
+  evidence: `src/components/MenuBar.vue` 中 `.menu-dropdown`/`.submenu-dropdown` 的展开逻辑完全依赖 CSS `:hover`/`:focus-within`，子菜单触发器与主题按钮之间没有可达的键盘聚焦路径；这是延续自更早期 story 的既有菜单交互模式，本次仅新增了第二层子菜单。
+- source_spec: `_bmad-output/implementation-artifacts/6-2-file-menu-theme-selector.md`
+  summary: Theme 子菜单触发器（`.submenu-trigger`）与主题选项完全依赖鼠标 `:hover`/`:focus-within` 展开，纯键盘用户仍无法聚焦并展开该子菜单选择主题。
+  evidence: `src/components/MenuBar.vue` 中 `.submenu-trigger` 及其兄弟顶层菜单项均未设置 `tabindex`，也没有 `keydown` 处理逻辑，Tab 键无法到达 Theme 子菜单或其内部的主题按钮。
+- source_spec: `_bmad-output/implementation-artifacts/6-2-file-menu-theme-selector.md`
+  summary: 主题切换复用了全局 `saveStatus`/`saveMessage` 通道用于反馈，可能覆盖并掩盖真实的文档保存成功/失败提示。
+  evidence: `src/App.vue` 的 `handleThemeSelect` 直接写入与自动保存、打开文件、另存为共用的 `saveStatus.value`/`saveMessage.value`，若用户在保存失败提示尚未处理时切换主题，失败提示会被主题切换消息静默覆盖；该单通道通知模式为既有设计，本次仅新增了一个写入者。
+- source_spec: `_bmad-output/implementation-artifacts/6-2-file-menu-theme-selector.md`
+  summary: 主题 ID 与默认主题 ID 分别在 `src/lib/themes.ts`/`themes.json`（前端）与 `src-tauri/src/config.rs`（后端 `VALID_THEME_IDS`/`DEFAULT_THEME_ID`）两处独立维护，缺少构建期或运行期校验保证一致。
+  evidence: `src-tauri/src/config.rs` 新增的 `VALID_THEME_IDS` 常量数组与 `DEFAULT_THEME_ID` 字面量需要手工与 `src/lib/themes.json` 的 10 个主题 id 及 `defaultThemeId` 保持同步，未来新增/重命名主题时容易遗漏一侧导致后端拒绝合法主题或默认值不一致。
+- source_spec: `_bmad-output/implementation-artifacts/6-2-file-menu-theme-selector.md`
+  summary: `main.ts` 的 `bootstrap()` 与 `App.vue` 的 `onMounted()` 在启动时各自独立调用一次 `get_config`，造成重复 IPC/磁盘读取。
+  evidence: `src/main.ts` 为预加载主题调用一次 `get_config`，`src/App.vue` 的 `onMounted` 又为读取 `savePath`/`lastOpenedFile` 再次调用同一命令，二者互不感知，属于冗余但非破坏性的重复初始化调用。
+- source_spec: `_bmad-output/implementation-artifacts/6-2-file-menu-theme-selector.md`
+  summary: `e2e/story-6-2.spec.ts` 对 AC3 的持久化验证依赖前端 Tauri mock 注入的 `get_config` 返回值模拟“重启”，并未真正验证 Rust 侧写入并重新读取 `config.json` 的完整闭环；同时缺少对 `set_config` 失败时主题回滚路径、以及配置中存有非法 `themeId` 时前端回退逻辑的测试覆盖。
+  evidence: `e2e/story-6-2.spec.ts` 的持久化用例通过 `page.addInitScript` 注入 `__TAURI_MOCK_CONFIG__` 模拟重启后的配置，而不是驱动真实的 Tauri 后端往返；`src/App.vue` 的 `handleThemeSelect` 失败回滚逻辑与 `src/lib/themes.ts` 的 `getResolvedThemeId` 回退逻辑均无对应测试用例。

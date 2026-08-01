@@ -7,9 +7,30 @@ use tauri::Manager;
 pub const ERR_APP_DIR_NOT_WRITABLE: &str = "ERR_APP_DIR_NOT_WRITABLE";
 pub const ERR_CONFIG_WRITE_FAILED: &str = "ERR_CONFIG_WRITE_FAILED";
 pub const ERR_CONFIG_READ_FAILED: &str = "ERR_CONFIG_READ_FAILED";
+pub const ERR_INVALID_THEME_ID: &str = "ERR_INVALID_THEME_ID";
 
 const CONFIG_FILE_NAME: &str = "config.json";
 const FALLBACK_DIR_NAME: &str = "My Markdown";
+const DEFAULT_THEME_ID: &str = "midnight-slate";
+
+/// 有效主题 ID 列表，需与 `src/lib/themes.json` 中的 id 保持一致。
+pub const VALID_THEME_IDS: &[&str] = &[
+    "paper-light",
+    "cream-warm",
+    "ice-cool",
+    "sand-sandstone",
+    "nord-light",
+    "cyberpunk-dark",
+    "obsidian-black",
+    "deep-void",
+    "midnight-slate",
+    "solarized-dark",
+];
+
+/// 校验主题 ID 是否为已知有效值。
+pub fn is_valid_theme_id(theme_id: &str) -> bool {
+    VALID_THEME_IDS.contains(&theme_id)
+}
 
 /// 应用配置结构。
 /// 新增未知字段默认忽略，以保证向后兼容。
@@ -22,6 +43,9 @@ pub struct AppConfig {
     /// 上次打开的文件完整路径，null 表示无。
     #[serde(rename = "lastOpenedFile")]
     pub last_opened_file: Option<String>,
+    /// 当前主题 ID，缺省时回退到应用默认主题。
+    #[serde(rename = "themeId", default = "default_theme_id")]
+    pub theme_id: String,
 }
 
 impl Default for AppConfig {
@@ -29,18 +53,13 @@ impl Default for AppConfig {
         Self {
             save_path: None,
             last_opened_file: None,
+            theme_id: default_theme_id(),
         }
     }
 }
 
-impl AppConfig {
-    /// 使用指定保存路径构造配置。
-    pub fn with_save_path(save_path: String) -> Self {
-        Self {
-            save_path: Some(save_path),
-            last_opened_file: None,
-        }
-    }
+fn default_theme_id() -> String {
+    DEFAULT_THEME_ID.to_string()
 }
 
 /// 检测目录是否可写：不存在则尝试创建，然后使用系统临时目录验证。

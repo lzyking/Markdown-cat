@@ -32,14 +32,26 @@ pub fn get_config(app_handle: tauri::AppHandle) -> CmdResult<AppConfig> {
     }
 }
 
-/// 设置默认保存路径并写入配置。
+/// 更新配置字段并写入配置。
 #[tauri::command]
-pub fn set_config(app_handle: tauri::AppHandle, save_path: String) -> CmdResult<()> {
+pub fn set_config(
+    app_handle: tauri::AppHandle,
+    save_path: Option<String>,
+    theme_id: Option<String>,
+) -> CmdResult<()> {
     match config::resolve_writable_dir(&app_handle) {
         Ok(dir) => {
             let config_path = config::config_file_path(&dir);
             let mut cfg = config::read_config(&config_path).unwrap_or_default();
-            cfg.save_path = Some(save_path);
+            if let Some(save_path) = save_path {
+                cfg.save_path = Some(save_path);
+            }
+            if let Some(theme_id) = theme_id {
+                if !config::is_valid_theme_id(&theme_id) {
+                    return CmdResult::failure(config::ERR_INVALID_THEME_ID.to_string());
+                }
+                cfg.theme_id = theme_id;
+            }
             match config::write_config(&config_path, &cfg) {
                 Ok(_) => CmdResult::ok(),
                 Err(e) => CmdResult::failure(e),
