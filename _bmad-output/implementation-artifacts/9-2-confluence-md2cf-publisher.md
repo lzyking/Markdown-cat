@@ -2,7 +2,7 @@
 id: 9-2-confluence-md2cf-publisher
 title: Publish Markdown to Confluence using md2cf and REST API
 epic: epic-9
-status: awaiting-operator
+status: done
 baseline_revision: 5a8801763b33e88f6423ea0603f626a0e5387979
 operator_actions:
   - "在设置 (Settings) 的 Confluence 标签页中填写真实的 Base URL、Username、API Token、Space Key 与 Parent Page ID，并保存令牌。"
@@ -67,3 +67,16 @@ Status: awaiting-operator
 - AC2 的 Confluence Storage Format 转换与附件上传逻辑仅通过单元级 E2E mock 验证，尚未在真实 Confluence 服务器上联调（无可用的真实凭据/服务器）；已列入 `operator_actions`。
 - 当前设计选择“内置转换引擎”作为默认发布路径（`md2cf` 命令行工具仅用于设置面板中的能力检测提示），若用户期望完全依赖 Python `md2cf` CLI 本身的转换实现，需额外沟通确认是否需要切换实现路径。
 - 附件上传采用简单 `POST` 而非按文件名检测已存在附件走 `POST /child/attachment/{id}/data` 更新版本；多数 Confluence Server/Cloud 版本会将同名附件自动创建为新版本，但个别旧版本 API 行为可能不同，建议在真实环境验证（已列入 `operator_actions`）。
+
+## Operator Confirmation
+
+Confirmed 2026-08-01: the external actions this story owed were carried out.
+
+- 在设置 (Settings) 的 Confluence 标签页中填写真实的 Base URL、Username、API Token、Space Key 与 Parent Page ID，并保存令牌。
+- 在真实 Confluence 空间中确认该账号/API Token 拥有目标 Space 的页面创建、更新与附件上传权限（部分 Confluence Server/Data Center 需管理员额外授权）。
+- 使用一份包含标题、段落、代码块、表格与本地图片的示例 Markdown 文档，执行菜单“文件 -> 发布到 Confluence…”，端到端验证：页面创建/更新是否成功、代码块是否正确渲染为 code 宏、表格是否正确渲染、本地图片是否作为附件上传并在页面中正确显示。
+- 若使用自签名证书或内网 Confluence Server，验证“忽略 SSL 校验”开关在真实网络环境下的行为，并确认证书链或代理配置符合预期。
+- （可选）如需启用真实的 Python `md2cf` 命令行工具而非内置转换引擎，在目标机器上执行 `pip install md2cf`（或 `pipx install md2cf`），再次打开设置的“测试连接”面板确认 `md2cf` 检测为已安装。当前实现在未检测到 `md2cf` 时会给出友好提示，但始终使用内置转换引擎完成发布，不会因此阻塞。
+- 重新执行一次发布到已存在同名页面的场景，确认“更新已存在页面”（而非重复创建）的分支在真实 Confluence 版本号递增机制下按预期工作。
+
+_Appended by the bmad-loop orchestrator (`bmad-loop confirm`, #335): a human confirmed these external actions out of band, and the story was advanced from `awaiting-operator` to `done`._

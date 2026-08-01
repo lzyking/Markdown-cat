@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use tauri::Manager;
@@ -21,6 +22,7 @@ pub const ERR_CONFLUENCE_CLIENT_BUILD_FAILED: &str = "ERR_CONFLUENCE_CLIENT_BUIL
 const CONFIG_FILE_NAME: &str = "config.json";
 const FALLBACK_DIR_NAME: &str = "My Markdown";
 const DEFAULT_THEME_ID: &str = "midnight-slate";
+const APP_IDENTIFIER: &str = "com.markdowncat.dev";
 
 /// 有效主题 ID 列表，需与 `src/lib/themes.json` 中的 id 保持一致。
 pub const VALID_THEME_IDS: &[&str] = &[
@@ -188,4 +190,43 @@ pub fn write_config(config_path: &Path, config: &AppConfig) -> Result<(), String
 /// 返回配置文件的完整路径。
 pub fn config_file_path(writable_dir: &Path) -> PathBuf {
     writable_dir.join(CONFIG_FILE_NAME)
+}
+
+pub fn panic_log_file_path() -> Option<PathBuf> {
+    resolve_app_data_dir().map(|dir| dir.join("logs").join("app.log"))
+}
+
+fn resolve_app_data_dir() -> Option<PathBuf> {
+    #[cfg(target_os = "windows")]
+    {
+        env::var_os("APPDATA")
+            .or_else(|| env::var_os("LOCALAPPDATA"))
+            .map(PathBuf::from)
+            .filter(|dir| dir.is_absolute())
+            .map(|dir| dir.join(APP_IDENTIFIER))
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        home_dir().map(|dir| {
+            dir.join("Library")
+                .join("Application Support")
+                .join(APP_IDENTIFIER)
+        })
+    }
+
+    #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+    {
+        env::var_os("XDG_DATA_HOME")
+            .map(PathBuf::from)
+            .filter(|dir| dir.is_absolute())
+            .or_else(|| home_dir().map(|dir| dir.join(".local").join("share")))
+            .map(|dir| dir.join(APP_IDENTIFIER))
+    }
+}
+
+fn home_dir() -> Option<PathBuf> {
+    env::var_os("HOME")
+        .map(PathBuf::from)
+        .filter(|dir| dir.is_absolute())
 }

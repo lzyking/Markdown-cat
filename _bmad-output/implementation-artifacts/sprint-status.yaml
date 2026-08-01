@@ -41,7 +41,7 @@
 # - Retrospective appends its action items to action_items; sprint-status surfaces open ones
 
 generated: 2026-07-22T00:00:00+08:00
-last_updated: 2026-07-23T00:00:00+08:00
+last_updated: 2026-08-01
 project: Markdown Cat
 project_key: NOKEY
 tracking_system: file-system
@@ -89,10 +89,10 @@ development_status:
   epic-8-retrospective: optional
   epic-9: in-progress
   9-1-confluence-config-setting-dialog: done
-  9-2-confluence-md2cf-publisher: awaiting-operator
+  9-2-confluence-md2cf-publisher: done
   epic-9-retrospective: optional
   epic-10: in-progress
-  10-1-windows-noconsole-gui-attribute: ready-for-dev
+  10-1-windows-noconsole-gui-attribute: awaiting-operator
   epic-10-retrospective: optional
 
 action_items:
