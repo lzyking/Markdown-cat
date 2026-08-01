@@ -8,6 +8,15 @@ pub const ERR_APP_DIR_NOT_WRITABLE: &str = "ERR_APP_DIR_NOT_WRITABLE";
 pub const ERR_CONFIG_WRITE_FAILED: &str = "ERR_CONFIG_WRITE_FAILED";
 pub const ERR_CONFIG_READ_FAILED: &str = "ERR_CONFIG_READ_FAILED";
 pub const ERR_INVALID_THEME_ID: &str = "ERR_INVALID_THEME_ID";
+pub const ERR_INVALID_CONFLUENCE_SPACE_KEY: &str = "ERR_INVALID_CONFLUENCE_SPACE_KEY";
+pub const ERR_INVALID_CONFLUENCE_PARENT_PAGE_ID: &str = "ERR_INVALID_CONFLUENCE_PARENT_PAGE_ID";
+pub const ERR_CONFLUENCE_TOKEN_ENTRY_FAILED: &str = "ERR_CONFLUENCE_TOKEN_ENTRY_FAILED";
+pub const ERR_CONFLUENCE_TOKEN_READ_FAILED: &str = "ERR_CONFLUENCE_TOKEN_READ_FAILED";
+pub const ERR_CONFLUENCE_TOKEN_WRITE_FAILED: &str = "ERR_CONFLUENCE_TOKEN_WRITE_FAILED";
+pub const ERR_CONFLUENCE_TOKEN_DELETE_FAILED: &str = "ERR_CONFLUENCE_TOKEN_DELETE_FAILED";
+pub const ERR_CONFLUENCE_TOKEN_MISSING: &str = "ERR_CONFLUENCE_TOKEN_MISSING";
+pub const ERR_CONFLUENCE_REQUEST_FAILED: &str = "ERR_CONFLUENCE_REQUEST_FAILED";
+pub const ERR_CONFLUENCE_CLIENT_BUILD_FAILED: &str = "ERR_CONFLUENCE_CLIENT_BUILD_FAILED";
 
 const CONFIG_FILE_NAME: &str = "config.json";
 const FALLBACK_DIR_NAME: &str = "My Markdown";
@@ -32,6 +41,17 @@ pub fn is_valid_theme_id(theme_id: &str) -> bool {
     VALID_THEME_IDS.contains(&theme_id)
 }
 
+pub fn is_valid_confluence_space_key(space_key: &str) -> bool {
+    !space_key.is_empty()
+        && space_key
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+}
+
+pub fn is_valid_confluence_parent_page_id(parent_page_id: &str) -> bool {
+    !parent_page_id.is_empty() && parent_page_id.chars().all(|ch| ch.is_ascii_digit())
+}
+
 /// 应用配置结构。
 /// 新增未知字段默认忽略，以保证向后兼容。
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -46,6 +66,23 @@ pub struct AppConfig {
     /// 当前主题 ID，缺省时回退到应用默认主题。
     #[serde(rename = "themeId", default = "default_theme_id")]
     pub theme_id: String,
+    /// Confluence 发布配置（不包含 API Token）。
+    #[serde(rename = "confluence", default)]
+    pub confluence: ConfluenceConfig,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[serde(default)]
+pub struct ConfluenceConfig {
+    #[serde(rename = "baseUrl")]
+    pub base_url: String,
+    pub username: String,
+    #[serde(rename = "spaceKey")]
+    pub space_key: String,
+    #[serde(rename = "parentPageId")]
+    pub parent_page_id: String,
+    #[serde(rename = "ignoreSsl")]
+    pub ignore_ssl: bool,
 }
 
 impl Default for AppConfig {
@@ -54,6 +91,7 @@ impl Default for AppConfig {
             save_path: None,
             last_opened_file: None,
             theme_id: default_theme_id(),
+            confluence: ConfluenceConfig::default(),
         }
     }
 }
@@ -138,15 +176,13 @@ pub fn read_config(config_path: &Path) -> Result<AppConfig, String> {
 /// 将配置以 JSON 格式写入指定路径。
 pub fn write_config(config_path: &Path, config: &AppConfig) -> Result<(), String> {
     if let Some(parent) = config_path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("{}: {}", ERR_CONFIG_WRITE_FAILED, e))?;
+        fs::create_dir_all(parent).map_err(|e| format!("{}: {}", ERR_CONFIG_WRITE_FAILED, e))?;
     }
 
     let content = serde_json::to_string_pretty(config)
         .map_err(|e| format!("{}: {}", ERR_CONFIG_WRITE_FAILED, e))?;
 
-    fs::write(config_path, content)
-        .map_err(|e| format!("{}: {}", ERR_CONFIG_WRITE_FAILED, e))
+    fs::write(config_path, content).map_err(|e| format!("{}: {}", ERR_CONFIG_WRITE_FAILED, e))
 }
 
 /// 返回配置文件的完整路径。

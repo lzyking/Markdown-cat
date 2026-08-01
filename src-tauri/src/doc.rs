@@ -182,12 +182,16 @@ mod tests {
     fn saves_binary_asset_into_target_directory() {
         let temp_dir = tempfile::tempdir().expect("create temp dir");
         let asset_dir = temp_dir.path().join("assets");
-        let (name, saved_path) = save_binary_asset_to_dir(&asset_dir, "img_test.png", &[1, 2, 3, 4])
-            .expect("save binary asset");
+        let (name, saved_path) =
+            save_binary_asset_to_dir(&asset_dir, "img_test.png", &[1, 2, 3, 4])
+                .expect("save binary asset");
 
         assert_eq!(name, "img_test.png");
         assert!(asset_dir.join("img_test.png").exists());
-        assert_eq!(std::fs::read(asset_dir.join("img_test.png")).unwrap(), vec![1, 2, 3, 4]);
+        assert_eq!(
+            std::fs::read(asset_dir.join("img_test.png")).unwrap(),
+            vec![1, 2, 3, 4]
+        );
         assert_eq!(saved_path, asset_dir.join("img_test.png").to_string_lossy());
     }
 
@@ -213,15 +217,21 @@ mod tests {
     fn save_binary_asset_avoids_overwriting_on_name_collision() {
         let temp_dir = tempfile::tempdir().expect("create temp dir");
         let asset_dir = temp_dir.path().join("assets");
-        let (first_name, _) = save_binary_asset_to_dir(&asset_dir, "img_dup.png", &[1, 2])
-            .expect("first save");
-        let (second_name, _) = save_binary_asset_to_dir(&asset_dir, "img_dup.png", &[3, 4])
-            .expect("second save");
+        let (first_name, _) =
+            save_binary_asset_to_dir(&asset_dir, "img_dup.png", &[1, 2]).expect("first save");
+        let (second_name, _) =
+            save_binary_asset_to_dir(&asset_dir, "img_dup.png", &[3, 4]).expect("second save");
 
         assert_eq!(first_name, "img_dup.png");
         assert_ne!(second_name, first_name);
-        assert_eq!(std::fs::read(asset_dir.join(&first_name)).unwrap(), vec![1, 2]);
-        assert_eq!(std::fs::read(asset_dir.join(&second_name)).unwrap(), vec![3, 4]);
+        assert_eq!(
+            std::fs::read(asset_dir.join(&first_name)).unwrap(),
+            vec![1, 2]
+        );
+        assert_eq!(
+            std::fs::read(asset_dir.join(&second_name)).unwrap(),
+            vec![3, 4]
+        );
     }
 
     #[test]
@@ -236,7 +246,10 @@ mod tests {
 
         assert!(result.is_some());
         assert!(to_dir.join("img_move.png").exists());
-        assert_eq!(std::fs::read(to_dir.join("img_move.png")).unwrap(), vec![5, 6]);
+        assert_eq!(
+            std::fs::read(to_dir.join("img_move.png")).unwrap(),
+            vec![5, 6]
+        );
     }
 
     #[test]

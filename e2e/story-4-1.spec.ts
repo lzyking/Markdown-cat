@@ -25,7 +25,7 @@ test.describe('Story 4.1：接入菜单入口与保存路径对话框', () => {
     await expect(modal).toBeVisible()
 
     const title = page.locator('#settings-modal-title')
-    await expect(title).toHaveText('设置保存路径')
+    await expect(title).toHaveText('设置')
 
     const pathInput = page.locator('.modal-body .path-input')
     await expect(pathInput).toBeVisible()

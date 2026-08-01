@@ -19,9 +19,42 @@ async function injectMocks(page: Page) {
         if (w.__TAURI_MOCK_CONFIG_ERROR__) {
           return { ok: false, error: w.__TAURI_MOCK_CONFIG_ERROR__ }
         }
-        return { ok: true, data: w.__TAURI_MOCK_CONFIG__ || { savePath: null } }
+        return {
+          ok: true,
+          data:
+            w.__TAURI_MOCK_CONFIG__ || {
+              savePath: null,
+              confluence: {
+                baseUrl: '',
+                username: '',
+                spaceKey: '',
+                parentPageId: '',
+                ignoreSsl: false,
+              },
+            },
+        }
       },
       set_config: () => ({ ok: true }),
+      set_confluence_config: () => ({ ok: true }),
+      get_confluence_token_status: () => ({ ok: true, data: { hasToken: false } }),
+      set_confluence_token: () => ({ ok: true }),
+      clear_confluence_token: () => ({ ok: true }),
+      check_md2cf_installed: () => ({
+        ok: true,
+        data: {
+          installed: false,
+          version: null,
+          message: '未检测到 md2cf，将使用 REST API 直连模式。',
+        },
+      }),
+      test_confluence_connection: () => ({
+        ok: true,
+        data: {
+          success: false,
+          message: '请在测试中按需覆盖 test_confluence_connection handler。',
+          statusCode: null,
+        },
+      }),
       select_save_dir: () => ({ ok: true, data: '/tmp/custom-markdown-save-dir' }),
       get_blank_document: () => ({
         ok: true,

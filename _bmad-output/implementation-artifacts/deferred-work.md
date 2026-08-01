@@ -233,3 +233,59 @@ location: src/lib/export-html.ts (exportSelfContainedHtml); src-tauri/src/comman
 severity: high
 reason: 当本地图片因体积超过 10MB（`LOCAL_IMAGE_EMBED_LIMIT_BYTES`）或路径无法解析而未被内嵌为 base64 时，`exportSelfContainedHtml` 会保留原始相对 `src` 并仅附加一条警告（`src/lib/export-html.ts` 约第 268-278 行）。无论是 HTML 导出（`save_document_as` 写入用户选择的任意目标目录）还是 PDF 导出（`pdf_export.rs` 将自包含 HTML 写入以导出目标路径的父目录为基准的临时文件），后续相对路径解析都以导出目标目录、而非原始文档所在目录（`documentBaseDir`）为基准，一旦两者不同，这些未内嵌的图片在导出产物中会直接失效/无法显示。该缺口源自 8-1 引入的 `exportSelfContainedHtml`/`documentBaseDir` 设计，并非 8-2 新增，但本轮针对 PDF 导出 diff 的评审重新验证并确认其依然存在，故记录以待后续统一修复（例如导出前将超限图片也内嵌，或在导出产物中改写为绝对路径/文档目录相对路径）。
 status: open
+
+## DW-18: Confluence 配置允许保存空的 Base URL / 用户名 / Space Key
+
+origin: review (Blind Hunter) of 9-1-confluence-config-setting-dialog, 2026-08-01
+location: src/components/SettingsModal.vue (onConfirmConfluence); src-tauri/src/commands/config.rs (set_confluence_config)
+severity: medium
+reason: `set_confluence_config` 仅对 Space Key / Parent Page ID 做格式校验，`onConfirmConfluence` 未强制要求 Base URL / 用户名 / Space Key 非空即可提示"保存成功"，可能让用户误以为已配置完整可用的 Confluence 连接。规格（AC1/AC5）未明确要求必填校验，故本轮未实现，建议后续补充必填字段校验或保存前的完整性提示。
+status: open
+
+## DW-19: Confluence 连接测试对任意 2xx 响应即判定成功，未校验响应内容类型/结构
+
+origin: review (Blind Hunter) of 9-1-confluence-config-setting-dialog, 2026-08-01
+location: src-tauri/src/commands/config.rs (build_confluence_test_result)
+severity: low
+reason: 若网络存在 SSO/代理拦截并返回 2xx 状态码的 HTML 登录页而非真实 Confluence API JSON，当前实现会误判为连接成功。建议后续增加对响应 Content-Type 或 JSON 结构（如 `key`/`name` 字段）的校验。
+status: open
+
+## DW-20: Confluence 设置弹窗缺少完整无障碍 Tab 模式（aria-controls / tabpanel / 键盘左右切换）
+
+origin: review (Blind Hunter) of 9-1-confluence-config-setting-dialog, 2026-08-01
+location: src/components/SettingsModal.vue (tab-bar)
+severity: low
+reason: 新增的“常规/Confluence”标签使用了 role="tab"，但未补充 aria-controls、role="tabpanel" 关联及方向键切换焦点等完整 WAI-ARIA Tabs 模式，属于无障碍体验的持续改进项，不影响核心功能。
+status: open
+
+## DW-21: 设置弹窗异步加载 Confluence 配置存在竞态：加载完成前用户开始编辑可能被静默覆盖
+
+origin: review (Edge Case Hunter) of 9-1-confluence-config-setting-dialog, 2026-08-01
+location: src/components/SettingsModal.vue (loadConfluenceSettings)
+severity: low
+reason: `loadConfluenceSettings` 异步返回后会直接覆盖表单字段；若用户在极短时间窗口内（网络/IPC 延迟较大时）已开始输入，理论上存在被静默覆盖的竞态风险。当前 Tauri IPC 调用在实际环境中通常极快，实测未触发，属于理论边界场景，记录以待后续增加"脏表单"保护。
+status: open
+
+- source_spec: `_bmad-output/implementation-artifacts/9-1-confluence-config-setting-dialog.md`
+  summary: 修改 Confluence Base URL/用户名但不重新输入 Token 时会静默复用旧的全局 Token，且无提示。
+  evidence: `onConfirmConfluence`（`SettingsModal.vue:208-252`）在 `set_confluence_config` 成功后仅在 `tokenInput` 非空时才调用 `set_confluence_token`；Token 通过固定的 `Entry::new(CONFLUENCE_TOKEN_SERVICE, CONFLUENCE_TOKEN_ACCOUNT)`（`commands/config.rs:8-9,332-334`）全局存取，与 Base URL/Space Key 无绑定关系。用户切换服务器地址但留空 Token 字段时，保存会成功且不给出任何"仍将使用旧凭据"的提示，可能导致后续测试连接/发布使用错误账号凭据却难以察觉。
+
+- source_spec: `_bmad-output/implementation-artifacts/9-1-confluence-config-setting-dialog.md`
+  summary: 设置弹窗关闭后 Confluence 表单字段未清空，短暂重开或异步加载失败时可能残留上一次的过期显示值。
+  evidence: `watch(() => props.isOpen, ...)`（`SettingsModal.vue:73-88`）在 `open` 分支才调用 `resetConfluenceMessages()`/`loadConfluenceSettings()`，关闭分支未清空 `confluenceForm`；若下一次打开时 `loadConfluenceSettings` 尚未返回或失败，用户会短暂看到上一次会话遗留的字段值。
+
+- source_spec: `_bmad-output/implementation-artifacts/9-1-confluence-config-setting-dialog.md`
+  summary: 点击"测试连接"因格式校验失败而提前返回时，上一次遗留的 md2cf 检测状态消息不会被清除，与当前错误提示同时展示造成误导。
+  evidence: `onTestConnection`（`SettingsModal.vue:273-281`）在 `spaceKeyError`/`parentPageIdError` 校验失败时提前 `return`，而 `resetConfluenceFeedback`（`SettingsModal.vue:328-333`）不重置 `md2cfMessage`/`md2cfInstalled`，导致界面同时显示"请先修正格式错误"与陈旧的 md2cf 检测结果。
+
+- source_spec: `_bmad-output/implementation-artifacts/9-1-confluence-config-setting-dialog.md`
+  summary: `test_confluence_connection` 仅对 Base URL 做去空格与去除末尾斜杠处理，未做格式校验或归一化，粘贴错误的 Confluence 页面 URL 或带错误 context path 的地址会导致请求地址拼接错误、报错信息不明确。
+  evidence: `commands/config.rs:251,283`：`base_url` 仅经 `trim()`/`trim_end_matches('/')`，随后直接拼接为 `{base_url}/rest/api/space/{space_key}`；未校验协议、路径或域名合法性，异常输入只会得到通用网络错误而非明确的地址格式提示。
+
+- source_spec: `_bmad-output/implementation-artifacts/9-1-confluence-config-setting-dialog.md`
+  summary: `check_md2cf_installed` 调用外部 `md2cf --version` 时未设置超时，若该二进制异常挂起，测试连接按钮会无限期等待。
+  evidence: `commands/config.rs:207-244`：`Command::new("md2cf").arg("--version").output()` 是同步阻塞调用且无超时控制；若系统 PATH 中的 `md2cf` 因损坏或异常而挂起，前端"测试连接"流程会一直等待其返回而无法给出反馈。
+
+- source_spec: `_bmad-output/implementation-artifacts/9-1-confluence-config-setting-dialog.md`
+  summary: `story-9-1.spec.ts` 完全 mock 了后端 Tauri 命令，对 Confluence 相关 Rust 逻辑（keyring 读写、请求体拼接、各类失败分支的错误码）缺乏真实的回归测试覆盖。
+  evidence: `e2e/story-9-1.spec.ts` 与 `e2e/utils/tauri-mock.ts` 中所有 `set_confluence_config`/`set_confluence_token`/`test_confluence_connection` 等命令均由前端 mock 直接返回预设结果，`src-tauri/src/commands/config.rs` 中新增的 keyring 存取、HTTP 请求构造与错误分类逻辑没有对应的 Rust 单元测试或集成测试验证；该 mock-everything 模式与项目内既有 e2e 用例一致（非本 story 独有），但使得本 story 新增的后端分支实际未被自动化验证。

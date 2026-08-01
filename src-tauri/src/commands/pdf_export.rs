@@ -57,23 +57,32 @@ pub async fn export_pdf(
     #[cfg(not(target_os = "macos"))]
     {
         let _ = (app_handle, html, save_path);
-        CmdResult::failure("ERR_PDF_EXPORT_UNSUPPORTED_PLATFORM: 当前平台暂不支持 PDF 导出".to_string())
+        CmdResult::failure(
+            "ERR_PDF_EXPORT_UNSUPPORTED_PLATFORM: 当前平台暂不支持 PDF 导出".to_string(),
+        )
     }
 }
 
 #[cfg(target_os = "macos")]
-async fn export_pdf_macos(app_handle: AppHandle, html: String, save_path: String) -> Result<CmdResult<SaveResult>, String> {
+async fn export_pdf_macos(
+    app_handle: AppHandle,
+    html: String,
+    save_path: String,
+) -> Result<CmdResult<SaveResult>, String> {
     let save_path_buf = PathBuf::from(&save_path);
     ensure_parent_directory(&save_path_buf)?;
 
-    let temp_parent = save_path_buf
-        .parent()
-        .map(Path::to_path_buf)
-        .unwrap_or(std::env::current_dir().map_err(|e| format!("ERR_PDF_EXPORT_TEMP_DIR_FAILED: {}", e))?);
+    let temp_parent = save_path_buf.parent().map(Path::to_path_buf).unwrap_or(
+        std::env::current_dir().map_err(|e| format!("ERR_PDF_EXPORT_TEMP_DIR_FAILED: {}", e))?,
+    );
     let temp_html = create_temp_html_file(&temp_parent, &html)?;
     let temp_html_path = temp_html.path().to_path_buf();
-    let temp_html_url = Url::from_file_path(&temp_html_path)
-        .map_err(|_| format!("ERR_PDF_EXPORT_TEMP_URL_FAILED: {}", temp_html_path.display()))?;
+    let temp_html_url = Url::from_file_path(&temp_html_path).map_err(|_| {
+        format!(
+            "ERR_PDF_EXPORT_TEMP_URL_FAILED: {}",
+            temp_html_path.display()
+        )
+    })?;
 
     let load_signal = Arc::new(Mutex::new(None));
     let (load_tx, load_rx) = mpsc::channel::<Result<(), String>>();
@@ -126,7 +135,13 @@ async fn export_pdf_macos(app_handle: AppHandle, html: String, save_path: String
         return Err(error);
     }
 
-    match recv_with_timeout(load_rx, Duration::from_secs(60), "ERR_PDF_EXPORT_LOAD_TIMEOUT: PDF 预览加载超时").await {
+    match recv_with_timeout(
+        load_rx,
+        Duration::from_secs(60),
+        "ERR_PDF_EXPORT_LOAD_TIMEOUT: PDF 预览加载超时",
+    )
+    .await
+    {
         Ok(Ok(())) => {}
         Ok(Err(error)) | Err(error) => {
             cleanup_hidden_window(&hidden_window);
@@ -144,8 +159,10 @@ async fn export_pdf_macos(app_handle: AppHandle, html: String, save_path: String
                 let mtm = match MainThreadMarker::new() {
                     Some(marker) => marker,
                     None => {
-                        let _ = pdf_tx_for_webview
-                            .send(Err("ERR_PDF_EXPORT_MAIN_THREAD_REQUIRED: PDF 导出必须在主线程执行".to_string()));
+                        let _ = pdf_tx_for_webview.send(Err(
+                            "ERR_PDF_EXPORT_MAIN_THREAD_REQUIRED: PDF 导出必须在主线程执行"
+                                .to_string(),
+                        ));
                         return;
                     }
                 };
@@ -153,18 +170,17 @@ async fn export_pdf_macos(app_handle: AppHandle, html: String, save_path: String
 
                 let raw_webview = platform_webview.inner() as *mut WKWebView;
                 if raw_webview.is_null() {
-                    let _ = pdf_tx_for_webview
-                        .send(Err("ERR_PDF_EXPORT_WEBVIEW_UNAVAILABLE: 无法访问原生 WebView".to_string()));
+                    let _ = pdf_tx_for_webview.send(Err(
+                        "ERR_PDF_EXPORT_WEBVIEW_UNAVAILABLE: 无法访问原生 WebView".to_string(),
+                    ));
                     return;
                 }
 
                 let completion = RcBlock::new(move |pdf_data: *mut NSData, error: *mut NSError| {
                     if !error.is_null() {
                         let ns_error = unsafe { &*error };
-                        let _ = pdf_tx_for_webview.send(Err(format!(
-                            "ERR_PDF_EXPORT_FAILED: {}",
-                            ns_error
-                        )));
+                        let _ = pdf_tx_for_webview
+                            .send(Err(format!("ERR_PDF_EXPORT_FAILED: {}", ns_error)));
                         return;
                     }
 
@@ -183,7 +199,10 @@ async fn export_pdf_macos(app_handle: AppHandle, html: String, save_path: String
                     webview.createPDFWithConfiguration_completionHandler(None, &completion);
                 }
             }) {
-                let _ = pdf_tx.send(Err(format!("ERR_PDF_EXPORT_WEBVIEW_ACCESS_FAILED: {}", error)));
+                let _ = pdf_tx.send(Err(format!(
+                    "ERR_PDF_EXPORT_WEBVIEW_ACCESS_FAILED: {}",
+                    error
+                )));
             }
         })
         .map_err(|e| format!("ERR_PDF_EXPORT_MAIN_THREAD_DISPATCH_FAILED: {}", e))
@@ -253,7 +272,9 @@ fn write_pdf_atomically(save_path: &Path, pdf_bytes: &[u8]) -> Result<(), String
         temp_file
             .write_all(pdf_bytes)
             .map_err(|e| format!("ERR_SAVE_FAILED: {}", e))?;
-        temp_file.flush().map_err(|e| format!("ERR_SAVE_FAILED: {}", e))?;
+        temp_file
+            .flush()
+            .map_err(|e| format!("ERR_SAVE_FAILED: {}", e))?;
     }
     temp_file
         .persist(save_path)
@@ -326,7 +347,10 @@ fn dispatch_load_file_url<R: Runtime>(
                 }
             });
             if let Err(error) = webview_access_result {
-                let _ = load_error_tx.send(Err(format!("ERR_PDF_EXPORT_WEBVIEW_ACCESS_FAILED: {}", error)));
+                let _ = load_error_tx.send(Err(format!(
+                    "ERR_PDF_EXPORT_WEBVIEW_ACCESS_FAILED: {}",
+                    error
+                )));
             }
         })
         .map_err(|e| format!("ERR_PDF_EXPORT_MAIN_THREAD_DISPATCH_FAILED: {}", e))
@@ -352,7 +376,10 @@ async fn recv_with_timeout<T: Send + 'static>(
 #[cfg(target_os = "macos")]
 fn cleanup_hidden_window<R: Runtime>(window: &WebviewWindow<R>) {
     if let Err(error) = window.destroy() {
-        eprintln!("Failed to destroy PDF export window {}: {error}", window.label());
+        eprintln!(
+            "Failed to destroy PDF export window {}: {error}",
+            window.label()
+        );
         let _ = window.close();
     }
 }

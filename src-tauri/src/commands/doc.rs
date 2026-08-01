@@ -35,11 +35,11 @@ pub fn generate_document_name(app_handle: tauri::AppHandle) -> CmdResult<String>
 pub fn get_blank_document(app_handle: tauri::AppHandle) -> CmdResult<DocumentState> {
     let filename = match config::resolve_save_dir(&app_handle) {
         Ok(save_dir) => doc::generate_unique_name(&save_dir).unwrap_or_else(|_| {
-            doc::generate_name_without_conflict_check()
-                .unwrap_or_else(|_| "New_*.md".to_string())
+            doc::generate_name_without_conflict_check().unwrap_or_else(|_| "New_*.md".to_string())
         }),
-        Err(_) => doc::generate_name_without_conflict_check()
-            .unwrap_or_else(|_| "New_*.md".to_string()),
+        Err(_) => {
+            doc::generate_name_without_conflict_check().unwrap_or_else(|_| "New_*.md".to_string())
+        }
     };
 
     CmdResult::success(DocumentState {
@@ -124,13 +124,13 @@ fn looks_like_image_content(path: &std::path::Path, bytes: &[u8]) -> bool {
         return true;
     }
     match bytes {
-        [0x89, 0x50, 0x4e, 0x47, ..] => true,                          // PNG
-        [0xff, 0xd8, 0xff, ..] => true,                                // JPEG
-        [0x47, 0x49, 0x46, 0x38, ..] => true,                          // GIF87a/89a
-        [0x42, 0x4d, ..] => true,                                      // BMP
-        [0x00, 0x00, 0x01, 0x00, ..] => true,                          // ICO
+        [0x89, 0x50, 0x4e, 0x47, ..] => true, // PNG
+        [0xff, 0xd8, 0xff, ..] => true,       // JPEG
+        [0x47, 0x49, 0x46, 0x38, ..] => true, // GIF87a/89a
+        [0x42, 0x4d, ..] => true,             // BMP
+        [0x00, 0x00, 0x01, 0x00, ..] => true, // ICO
         b if b.len() >= 12 && &b[0..4] == b"RIFF" && &b[8..12] == b"WEBP" => true,
-        b if b.len() >= 12 && &b[4..8] == b"ftyp" => true,             // AVIF/HEIF family
+        b if b.len() >= 12 && &b[4..8] == b"ftyp" => true, // AVIF/HEIF family
         b if b.len() >= 4 && (&b[0..2] == b"II" || &b[0..2] == b"MM") => true, // TIFF
         _ => false,
     }
@@ -176,7 +176,10 @@ pub fn save_document(
 /// 使文档中已存在的相对路径图片（非本次会话粘贴产生）也能在预览中正常渲染，
 /// 而不必等到本次会话内首次粘贴/迁移图片才被动放宽。
 #[tauri::command]
-pub fn read_external_document(app_handle: tauri::AppHandle, path: String) -> CmdResult<DocumentState> {
+pub fn read_external_document(
+    app_handle: tauri::AppHandle,
+    path: String,
+) -> CmdResult<DocumentState> {
     use tauri::Manager;
 
     let p = std::path::Path::new(&path);
@@ -189,7 +192,9 @@ pub fn read_external_document(app_handle: tauri::AppHandle, path: String) -> Cmd
         .unwrap_or("")
         .to_lowercase();
     if ext != "md" && ext != "markdown" && ext != "txt" {
-        return CmdResult::failure("ERR_UNSUPPORTED_FILE_TYPE: 仅支持打开 .md, .markdown, .txt 格式文件".to_string());
+        return CmdResult::failure(
+            "ERR_UNSUPPORTED_FILE_TYPE: 仅支持打开 .md, .markdown, .txt 格式文件".to_string(),
+        );
     }
     match std::fs::read_to_string(p) {
         Ok(content) => {
@@ -198,8 +203,14 @@ pub fn read_external_document(app_handle: tauri::AppHandle, path: String) -> Cmd
                 .map(|s| s.to_string_lossy().to_string())
                 .unwrap_or_else(|| "Untitled.md".to_string());
             if let Some(parent) = p.parent() {
-                if let Err(e) = app_handle.asset_protocol_scope().allow_directory(parent, true) {
-                    eprintln!("Failed to widen asset protocol scope for {}: {e}", parent.display());
+                if let Err(e) = app_handle
+                    .asset_protocol_scope()
+                    .allow_directory(parent, true)
+                {
+                    eprintln!(
+                        "Failed to widen asset protocol scope for {}: {e}",
+                        parent.display()
+                    );
                 }
             }
             CmdResult::success(DocumentState { filename, content })
@@ -212,7 +223,11 @@ pub fn read_external_document(app_handle: tauri::AppHandle, path: String) -> Cmd
 /// 保存成功后动态放宽目标目录的 asset:// 协议可访问范围，
 /// 使新目录中已存在的相对路径图片也能在预览中正常渲染。
 #[tauri::command]
-pub fn save_document_as(app_handle: tauri::AppHandle, target_path: String, content: String) -> CmdResult<SaveResult> {
+pub fn save_document_as(
+    app_handle: tauri::AppHandle,
+    target_path: String,
+    content: String,
+) -> CmdResult<SaveResult> {
     use tauri::Manager;
 
     let path = std::path::Path::new(&target_path);
@@ -228,8 +243,14 @@ pub fn save_document_as(app_handle: tauri::AppHandle, target_path: String, conte
                 .map(|s| s.to_string_lossy().to_string())
                 .unwrap_or_else(|| "Untitled.md".to_string());
             if let Some(parent) = path.parent() {
-                if let Err(e) = app_handle.asset_protocol_scope().allow_directory(parent, true) {
-                    eprintln!("Failed to widen asset protocol scope for {}: {e}", parent.display());
+                if let Err(e) = app_handle
+                    .asset_protocol_scope()
+                    .allow_directory(parent, true)
+                {
+                    eprintln!(
+                        "Failed to widen asset protocol scope for {}: {e}",
+                        parent.display()
+                    );
                 }
             }
             CmdResult::success(SaveResult {
@@ -243,7 +264,10 @@ pub fn save_document_as(app_handle: tauri::AppHandle, target_path: String, conte
 
 /// 读取用于 HTML 导出的本地图片。超过给定大小限制时仅返回元数据，不回传 base64 内容。
 #[tauri::command]
-pub fn read_image_asset(path: String, max_inline_size_bytes: Option<u64>) -> CmdResult<ReadImageAssetResult> {
+pub fn read_image_asset(
+    path: String,
+    max_inline_size_bytes: Option<u64>,
+) -> CmdResult<ReadImageAssetResult> {
     let image_path = std::path::Path::new(&path);
     if !image_path.exists() || !image_path.is_file() {
         return CmdResult::failure("ERR_FILE_NOT_FOUND".to_string());
@@ -300,7 +324,10 @@ pub fn save_image_asset(
     let directory = std::path::Path::new(&target_dir);
     match doc::save_binary_asset_to_dir(directory, &filename, &bytes) {
         Ok((final_name, full_path)) => {
-            if let Err(e) = app_handle.asset_protocol_scope().allow_directory(directory, true) {
+            if let Err(e) = app_handle
+                .asset_protocol_scope()
+                .allow_directory(directory, true)
+            {
                 // File is already written; only the asset:// preview scope grant failed.
                 // Do not fail the whole command for this, but surface it for diagnosis.
                 eprintln!("Failed to widen asset protocol scope for {target_dir}: {e}");
