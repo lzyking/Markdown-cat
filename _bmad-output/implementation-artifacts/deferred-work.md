@@ -487,34 +487,52 @@ reason: 对比 `.submenu-dropdown` 已有 `role="menu"` 而 `.menu-dropdown` 从
 status: done 2026-08-02
 resolution: resolved by sweep bundle dw-menu-aria-semantics
 
-- source_spec: `_bmad-output/implementation-artifacts/spec-dw-31-33-theme-visual-token-consistency-2.md`
-  summary: `src/styles/preview-export.css` still hard-codes the pre-existing `rgba(255, 255, 255, 0.05)`/`rgba(255, 255, 255, 0.02)` table header/zebra-stripe overlay literals instead of the new `--color-overlay-header`/`--color-overlay-zebra` tokens, so HTML exports of tables will not match the live `PreviewPane.vue` rendering once a light theme is active.
-  evidence: Confirmed via `grep -n "rgba(255" src/styles/preview-export.css`; this file was explicitly out of scope for the DW-31/32/33 spec (only `PreviewPane.vue`/`SlashMenu.vue`/`SettingsModal.vue`/`src/lib/preview.ts`/`src/styles/app.css` were in scope) and predates this change.
+### DW-69: src/styles/preview-export.css hard-codes overlay colors instead of design tokens
 
-- source_spec: `_bmad-output/implementation-artifacts/spec-dw-31-33-theme-visual-token-consistency-2.md`
-  summary: `src/components/SettingsModal.vue` hard-codes a success-state text color (`color: #3fb950`) instead of referencing the `--color-success` token, so it will not adopt the new per-theme light-mode success color values added by this story.
-  evidence: Confirmed via `grep -n "#3fb950" src/components/SettingsModal.vue` (line 696); this hardcode predates this change and was outside the DW-31/32/33 task list.
+origin: migrated from legacy ledger ("review of spec-dw-31-33-theme-visual-token-consistency-2.md"), 2026-08-02
+location: src/styles/preview-export.css
+reason: Still hard-codes the pre-existing `rgba(255, 255, 255, 0.05)`/`rgba(255, 255, 255, 0.02)` table header/zebra-stripe overlay literals instead of the new `--color-overlay-header`/`--color-overlay-zebra` tokens, so HTML exports of tables will not match the live `PreviewPane.vue` rendering once a light theme is active. Confirmed via `grep -n "rgba(255" src/styles/preview-export.css`; this file was explicitly out of scope for the DW-31/32/33 spec (only `PreviewPane.vue`/`SlashMenu.vue`/`SettingsModal.vue`/`src/lib/preview.ts`/`src/styles/app.css` were in scope) and predates this change.
+status: open
 
-- source_spec: `_bmad-output/implementation-artifacts/spec-dw-31-33-theme-visual-token-consistency-2.md`
-  summary: `src/components/PublishConfluenceModal.vue` hard-codes a confirm-button text color (`color: white`) and references an undefined `--color-danger` fallback variable instead of the token-system `--color-error`, so it neither adopts `--color-accent-foreground` nor the new per-theme error colors.
-  evidence: Confirmed via `grep -n "color: white\|color-danger" src/components/PublishConfluenceModal.vue` (lines 263, 272); this file was explicitly excluded from the DW-31/32/33 scope and the hardcode predates this change.
+### DW-70: SettingsModal.vue hard-codes success-state text color instead of --color-success token
 
-- source_spec: `_bmad-output/implementation-artifacts/spec-dw-67-68-menu-aria-semantics.md`
-  summary: The two `.menu-dropdown` containers (and the pre-existing `.submenu-dropdown`) now all declare `role="menu"` but none has an `aria-label`/`aria-labelledby` tying it back to its trigger text ("Markdown Cat" / "文件" / "Theme"), so a screen reader announces "menu" with no distinguishing name when moving between them.
-  evidence: Confirmed via `grep -n 'role="menu"' src/components/MenuBar.vue` — none of the three `role="menu"` elements has an accompanying `aria-label`/`aria-labelledby`; `.submenu-dropdown` already lacked this before the DW-67/68 fix, and DW-67/68's scope was explicitly limited to `aria-expanded` and `role="menu"` parity only.
+origin: migrated from legacy ledger ("review of spec-dw-31-33-theme-visual-token-consistency-2.md"), 2026-08-02
+location: src/components/SettingsModal.vue:696
+reason: Hard-codes `color: #3fb950` instead of referencing the `--color-success` token, so it will not adopt the new per-theme light-mode success color values added by this story. Confirmed via `grep -n "#3fb950" src/components/SettingsModal.vue`; this hardcode predates this change and was outside the DW-31/32/33 task list.
+status: open
 
-- source_spec: `_bmad-output/implementation-artifacts/spec-dw-47-49-55-clipboard-paste-editor-robustness.md`
-  summary: `handleClipboardImagePaste` in `App.vue` resolves the pending `save_image_asset` invocation and calls `sourceEditorRef.value?.insertText(...)` against whatever document is currently open, so if the user switches to a different file before the async save completes, the image markdown reference is inserted into the wrong (newly opened) document instead of the one the paste originated from.
-  evidence: `App.vue`'s `handleClipboardImagePaste` reads `sourceEditorRef.value` at resolve time with no document/session identity check; this asynchronous save-then-insert race predates this story (the save was already async before DW-47/49/55), and this story's changes (mixed-content dual paste, base64 transfer, position-token mapping) do not touch document-switch handling, so the gap is pre-existing and only surfaced incidentally while reviewing the position-mapping logic.
+### DW-71: PublishConfluenceModal.vue hard-codes confirm-button color and undefined --color-danger fallback
 
-- source_spec: `_bmad-output/implementation-artifacts/spec-dw-47-49-55-clipboard-paste-editor-robustness.md`
-  summary: `positionTokenSeq`/`trackedPastePositions` in `SourceEditor.vue` are scoped per component instance with no namespacing by document or editor-instance identity, so if the editor is unmounted and remounted (or the document context otherwise resets) while a paste's async `save_image_asset` call is still pending, the stale token number could coincide with a freshly issued token in the new instance and cause the pending insert to target an unrelated position.
-  evidence: `positionTokenSeq` is a plain incrementing `let` reset to `0` on every `emitClipboardImage`/component setup call and never invalidated on unmount beyond the `trackedPastePositions.clear()` triggered by external content replacement in the `watch` callback; this is a new mechanism introduced by this story (position-token tracking for DW-55) and is a plausible but narrow lifecycle edge case, not exercised by any current test.
+origin: migrated from legacy ledger ("review of spec-dw-31-33-theme-visual-token-consistency-2.md"), 2026-08-02
+location: src/components/PublishConfluenceModal.vue:263,272
+reason: Hard-codes a confirm-button text color (`color: white`) and references an undefined `--color-danger` fallback variable instead of the token-system `--color-error`, so it neither adopts `--color-accent-foreground` nor the new per-theme error colors. Confirmed via `grep -n "color: white\|color-danger" src/components/PublishConfluenceModal.vue`; this file was explicitly excluded from the DW-31/32/33 scope and the hardcode predates this change.
+status: open
 
-- source_spec: `_bmad-output/implementation-artifacts/spec-dw-47-49-55-clipboard-paste-editor-robustness.md`
-  summary: `handleClipboardImagePaste`'s success branch in `App.vue` sets `saveStatus.value = 'success'` and a success message unconditionally after `sourceEditorRef.value?.insertText(...)`, without checking whether `sourceEditorRef.value` was actually available/truthy, so if the editor ref is unavailable at resolve time the file is still written to disk but no Markdown reference is inserted while the UI still reports success.
-  evidence: The `insertText` call uses optional chaining (`sourceEditorRef.value?.insertText(...)`) with no resulting boolean/return value checked before setting `saveStatus.value = 'success'`; this optional-chaining-without-verification pattern predates this story (present in the original `insertText()` call before the position-token parameter was added) and is not a new regression introduced by DW-47/49/55, only surfaced incidentally during this review.
+### DW-72: MenuBar.vue role="menu" containers lack aria-label tying them to their trigger text
 
-- source_spec: `_bmad-output/implementation-artifacts/spec-dw-47-49-55-clipboard-paste-editor-robustness.md`
-  summary: `handleClipboardImagePaste` in `App.vue` resolves the pending `save_image_asset` invocation and calls `sourceEditorRef.value?.insertText(...)` against whatever document is currently open, so if the user switches to a different file before the async save completes, the image markdown reference is inserted into the wrong (newly opened) document instead of the one the paste originated from.
-  evidence: `App.vue`'s `handleClipboardImagePaste` reads `sourceEditorRef.value` at resolve time with no document/session identity check; this asynchronous save-then-insert race predates this story (the save was already async before DW-47/49/55), and this story's changes (mixed-content dual paste, base64 transfer, position-token mapping) do not touch document-switch handling. Independently re-surfaced by this review pass's reviewers (previously deferred in the prior "Follow-up review pass" of this same spec); re-recorded here per this workflow's append-only, no-dedup ledger policy.
+origin: migrated from legacy ledger ("review of spec-dw-67-68-menu-aria-semantics.md"), 2026-08-02
+location: src/components/MenuBar.vue
+reason: The two `.menu-dropdown` containers (and the pre-existing `.submenu-dropdown`) now all declare `role="menu"` but none has an `aria-label`/`aria-labelledby` tying it back to its trigger text ("Markdown Cat" / "文件" / "Theme"), so a screen reader announces "menu" with no distinguishing name when moving between them. Confirmed via `grep -n 'role="menu"' src/components/MenuBar.vue`; DW-67/68's scope was explicitly limited to `aria-expanded` and `role="menu"` parity only.
+status: open
+
+### DW-73: Async image-paste insert can target the wrong document if the user switches files mid-save
+
+origin: migrated from legacy ledger ("review of spec-dw-47-49-55-clipboard-paste-editor-robustness.md"), 2026-08-02
+location: src/App.vue (handleClipboardImagePaste)
+reason: `handleClipboardImagePaste` resolves the pending `save_image_asset` invocation and calls `sourceEditorRef.value?.insertText(...)` against whatever document is currently open, so if the user switches to a different file before the async save completes, the image markdown reference is inserted into the wrong (newly opened) document instead of the one the paste originated from. This asynchronous save-then-insert race predates this story and is not touched by its changes; independently re-surfaced twice by different review passes over the same spec.
+status: open
+seen-again: review of spec-dw-47-49-55-clipboard-paste-editor-robustness.md (re-confirmed still unresolved by a second reviewer)
+
+### DW-74: positionTokenSeq/trackedPastePositions in SourceEditor.vue not namespaced by document/editor-instance identity
+
+origin: migrated from legacy ledger ("review of spec-dw-47-49-55-clipboard-paste-editor-robustness.md"), 2026-08-02
+location: src/components/SourceEditor.vue
+reason: `positionTokenSeq`/`trackedPastePositions` are scoped per component instance with no namespacing by document or editor-instance identity, so if the editor is unmounted and remounted (or the document context otherwise resets) while a paste's async `save_image_asset` call is still pending, the stale token number could coincide with a freshly issued token in the new instance and cause the pending insert to target an unrelated position. New mechanism introduced by this story (position-token tracking), a plausible but narrow lifecycle edge case not exercised by any current test.
+status: open
+
+### DW-75: handleClipboardImagePaste reports save success without checking sourceEditorRef availability
+
+origin: migrated from legacy ledger ("review of spec-dw-47-49-55-clipboard-paste-editor-robustness.md"), 2026-08-02
+location: src/App.vue (handleClipboardImagePaste)
+reason: The success branch sets `saveStatus.value = 'success'` and a success message unconditionally after `sourceEditorRef.value?.insertText(...)`, without checking whether `sourceEditorRef.value` was actually available/truthy, so if the editor ref is unavailable at resolve time the file is still written to disk but no Markdown reference is inserted while the UI still reports success. This optional-chaining-without-verification pattern predates this story and is not a new regression.
+status: open
