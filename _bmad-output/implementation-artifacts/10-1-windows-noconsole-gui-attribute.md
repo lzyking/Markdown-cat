@@ -2,7 +2,7 @@
 id: 10-1-windows-noconsole-gui-attribute
 title: Windows Subsystem GUI No-Console Launcher Attribute Configuration
 epic: epic-10
-status: awaiting-operator
+status: done
 baseline_revision: 2ab39d7b2ff9cdb3690fe2b1a31306bcff05e674
 final_revision: e588aeefe3845a2af74b9dc015bdbaa1985e5546
 review_loop_iteration: 0
@@ -83,3 +83,15 @@ Status: awaiting-operator
 - `app.log` 目前无大小上限/轮转策略，长期崩溃循环可能导致日志文件无限增长；如需要可作为后续增强单独跟踪。
 - panic 消息与完整 backtrace 会原样写入日志文件，理论上可能包含文件路径等信息；日志仅落盘于本机应用数据目录，未上传或外发，风险可控。
 - `APP_IDENTIFIER` 常量在 Rust 侧硬编码为 `com.markdowncat.dev`，与 `tauri.conf.json` 的 `identifier` 字段重复维护；如后续该标识变更需同步修改两处。
+
+## Operator Confirmation
+
+Confirmed 2026-08-02: the external actions this story owed were carried out.
+
+- 在 Windows 机器上执行 Release 打包（例如 `cargo tauri build` 或 CI 的 Windows 构建产物），双击生成的 `.exe` 或桌面快捷方式启动应用，确认不出现命令提示符/终端黑窗口。
+- 在同一 Release 版本运行状态下，点击关闭应用主窗口，确认进程在任务管理器中随之退出，不留下常驻后台进程。
+- 对比 Debug 构建（例如 `cargo tauri dev` 或本地 debug 二进制）启动，确认控制台窗口仍然可见，用于确认 Debug/Release 条件隔离按预期生效。
+- 在 Windows 上人为触发一次应用崩溃（或使用调试手段引发 panic），确认 `%APPDATA%/com.markdowncat.dev/logs/app.log`（或应用实际 app_data_dir 下的 `logs/app.log`）中生成了包含时间戳、线程、panic 消息、代码位置与堆栈回溯的记录。
+- 检查 `src-tauri/Cargo.toml` 与 `tauri.conf.json` 生成的 Windows 安装包（MSI/NSIS）在真实 Windows 环境下的行为是否符合预期（例如安装/卸载、快捷方式创建），确认无需额外的 Windows bundle 配置项。
+
+_Appended by the bmad-loop orchestrator (`bmad-loop confirm`, #335): a human confirmed these external actions out of band, and the story was advanced from `awaiting-operator` to `done`._
