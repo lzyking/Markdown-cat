@@ -269,9 +269,12 @@ fn home_dir() -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::{
-        ConfigError, ERR_APP_DIR_NOT_WRITABLE, ERR_CONFIG_READ_FAILED, ERR_CONFIG_WRITE_FAILED,
+        config_file_path, read_config, write_config, AppConfig, ConfigError,
+        ERR_APP_DIR_NOT_WRITABLE, ERR_CONFIG_READ_FAILED, ERR_CONFIG_WRITE_FAILED,
     };
+    use std::fs;
     use std::io;
+    use tempfile::tempdir;
 
     #[test]
     fn config_error_display_matches_app_dir_prefix() {
@@ -294,6 +297,60 @@ mod tests {
         assert_eq!(
             error.to_string(),
             format!("{ERR_CONFIG_READ_FAILED}: permission denied")
+        );
+    }
+
+    #[test]
+    fn config_round_trip_persists_theme_id_and_save_path() {
+        let temp_dir = tempdir().expect("create temp dir");
+        let config_path = config_file_path(temp_dir.path());
+        let config = AppConfig {
+            save_path: Some("/Users/test/save".to_string()),
+            last_opened_file: Some("/Users/test/docs/note.md".to_string()),
+            theme_id: "nord-light".to_string(),
+            confluence: Default::default(),
+        };
+
+        write_config(&config_path, &config).expect("write config");
+
+        let loaded = read_config(&config_path).expect("read config");
+
+        assert_eq!(loaded.save_path, config.save_path);
+        assert_eq!(loaded.last_opened_file, config.last_opened_file);
+        assert_eq!(loaded.theme_id, config.theme_id);
+        assert_eq!(loaded.confluence.base_url, config.confluence.base_url);
+        assert_eq!(loaded.confluence.username, config.confluence.username);
+        assert_eq!(loaded.confluence.space_key, config.confluence.space_key);
+        assert_eq!(
+            loaded.confluence.parent_page_id,
+            config.confluence.parent_page_id
+        );
+        assert_eq!(loaded.confluence.ignore_ssl, config.confluence.ignore_ssl);
+    }
+
+    #[test]
+    fn read_config_falls_back_to_default_on_corrupted_json() {
+        let temp_dir = tempdir().expect("create temp dir");
+        let config_path = config_file_path(temp_dir.path());
+        let default_config = AppConfig::default();
+        fs::write(&config_path, "{ not valid json").expect("write corrupted config");
+
+        let loaded = read_config(&config_path).expect("read config");
+
+        assert_eq!(loaded.save_path, default_config.save_path);
+        assert_eq!(loaded.last_opened_file, default_config.last_opened_file);
+        assert_eq!(loaded.theme_id, default_config.theme_id);
+        assert_eq!(
+            loaded.confluence.base_url,
+            default_config.confluence.base_url
+        );
+        assert_eq!(
+            loaded.confluence.space_key,
+            default_config.confluence.space_key
+        );
+        assert_eq!(
+            loaded.confluence.ignore_ssl,
+            default_config.confluence.ignore_ssl
         );
     }
 }

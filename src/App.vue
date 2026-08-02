@@ -13,6 +13,7 @@ import SettingsModal from './components/SettingsModal.vue'
 import SlashMenu, { type SlashMenuItem } from './components/SlashMenu.vue'
 import type { CursorPosition } from './components/SourceEditor.vue'
 import { applyTheme, getActiveThemeId } from './lib/theme'
+import { resolveThemeSelectionOutcome, type ThemeSelectOutcome } from './lib/theme-select'
 import { renderMarkdown } from './lib/markdown'
 import { getResolvedThemeId } from './lib/themes'
 import { exportSelfContainedHtml, isHtmlExportCancelledError, type ExportImageWarning } from './lib/export-html'
@@ -689,25 +690,23 @@ async function handleThemeSelect(themeId: string) {
   const previousThemeId = activeThemeId.value
   const resolvedThemeId = applyTheme(themeId)
   activeThemeId.value = resolvedThemeId
+  let outcome: ThemeSelectOutcome
 
   try {
     const res = await invoke<CmdResult<null>>('set_config', {
       themeId: resolvedThemeId,
     })
-    if (!res.ok) {
-      activeThemeId.value = applyTheme(previousThemeId)
-      themeStatus.value = 'failure'
-      themeMessage.value = `主题保存失败：${res.error || '未知错误'}`
-      return
-    }
-
-    themeStatus.value = 'success'
-    themeMessage.value = `主题已切换为 ${resolvedThemeId}`
+    outcome = resolveThemeSelectionOutcome(previousThemeId, resolvedThemeId, res)
   } catch (err: any) {
-    activeThemeId.value = applyTheme(previousThemeId)
-    themeStatus.value = 'failure'
-    themeMessage.value = `主题保存异常：${err?.message || '系统错误'}`
+    outcome = resolveThemeSelectionOutcome(previousThemeId, resolvedThemeId, null, err?.message)
   }
+
+  if (outcome.themeId !== resolvedThemeId) {
+    activeThemeId.value = applyTheme(outcome.themeId)
+  }
+
+  themeStatus.value = outcome.status
+  themeMessage.value = outcome.message
 }
 
 async function loadFileFromPath(filePath: string) {

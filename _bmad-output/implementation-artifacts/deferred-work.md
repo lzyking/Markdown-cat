@@ -222,7 +222,8 @@ origin: migrated from legacy ledger ("## DW-34"), 2026-08-02
 location: `e2e/story-6-2.spec.ts` 的持久化用例通过 `page.addInitScript` 注入 `__TAURI_MOCK_CONFIG__` 模拟重启后的配置，而不是驱动真实的 Tauri 后端往返；`src/App.vue` 的 `handleThemeSelect` 失败回滚逻辑与 `src/lib/themes.ts` 的 `getResolvedThemeId` 回退逻辑均无对应测试用例。
 severity: low
 reason: `e2e/story-6-2.spec.ts` 对 AC3 的持久化验证依赖前端 Tauri mock 注入的 `get_config` 返回值模拟“重启”，并未真正验证 Rust 侧写入并重新读取 `config.json` 的完整闭环；同时缺少对 `set_config` 失败时主题回滚路径、以及配置中存有非法 `themeId` 时前端回退逻辑的测试覆盖。
-status: open
+status: done 2026-08-02
+resolution: resolved by sweep bundle dw-config-theme-persistence-test-coverage
 
 ### DW-43: `SourceEditor.insertTemplate` 仅替换触发用的 `/` 字符，并非真正在“行首”插入；若光标在行中间触发 slash 菜单，插入内容会拼接在光标处而非行首。
 

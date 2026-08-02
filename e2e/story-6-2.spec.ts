@@ -91,6 +91,8 @@ test.describe('Story 6.2：File 菜单 Theme 子菜单选择与配置持久化',
       .pop()
     expect(setConfigCall?.args?.themeId).toBe('nord-light')
 
+    // DW-42：write_config→read_config 的真实文件写入/重新读取闭环由 src-tauri/src/config.rs 单测覆盖；
+    // 此处继续验证前端 set_config 调用契约与重启后应用主题的前端行为。
     // 模拟“重启”：以持久化后的 themeId 作为 get_config 返回值重新加载页面。
     // 使用 addInitScript（而非 page.evaluate）确保该值在 reload 触发的新导航中依然生效。
     await page.addInitScript(() => {

@@ -1,4 +1,4 @@
-import themeRegistry from './themes.json'
+import themeRegistry from './themes.json' with { type: 'json' }
 
 export interface Theme {
   id: string
