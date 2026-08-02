@@ -60,6 +60,36 @@ test.describe('Story 7.1：斜杠菜单任务列表与预览交互', () => {
     expect(content).toBe('- [ ] ')
   })
 
+  test('行中间触发斜杠菜单时应将模板插入到当前行行首', async ({ page }) => {
+    const editor = page.locator('.source-editor .cm-content')
+    await editor.click()
+    await page.keyboard.type('hello world')
+    await page.keyboard.press('ArrowLeft')
+    await page.keyboard.press('ArrowLeft')
+    await page.keyboard.press('ArrowLeft')
+    await page.keyboard.press('ArrowLeft')
+    await page.keyboard.press('ArrowLeft')
+    await page.keyboard.press('ArrowLeft')
+    await page.keyboard.press('/')
+
+    const h1Item = page.locator('.slash-menu-item', { hasText: 'H1 一级标题' })
+    await expect(h1Item).toBeVisible()
+    await h1Item.click()
+
+    await expect(page.locator('.slash-menu')).toHaveCount(0)
+
+    const { content, anchor } = await page.evaluate(() => {
+      const cmView = (document.querySelector('.source-editor') as any)?.__codemirrorView
+      return {
+        content: cmView?.state.doc.toString(),
+        anchor: cmView?.state.selection.main.anchor,
+      }
+    })
+
+    expect(content).toBe('# hello world')
+    expect(anchor).toBe(2)
+  })
+
   test('点击预览区任务复选框应回写 Markdown 内容', async ({ page }) => {
     const editor = page.locator('.source-editor .cm-content')
     await editor.fill('- [ ] first\n- [x] second')

@@ -226,7 +226,8 @@ origin: migrated from legacy ledger ("## DW-35"), 2026-08-02
 location: `src/components/SourceEditor.vue` 的 `insertTemplate` 只在光标前一个字符是 `/` 时把它连同后续内容替换为模板，不会主动定位到行首；这是 ul/ol/quote 等既有菜单项共享的历史行为（本故事的 task-list 项复用同一机制），非本故事新引入，需要单独的规格决策后统一修复。
 severity: low
 reason: `SourceEditor.insertTemplate` 仅替换触发用的 `/` 字符，并非真正在“行首”插入；若光标在行中间触发 slash 菜单，插入内容会拼接在光标处而非行首。
-status: open
+status: done 2026-08-02
+resolution: resolved by sweep bundle dw-slash-template-line-start-fix
 
 ### DW-44: 预览区渲染出的任务列表 checkbox 缺少可访问的 label/name，只有小方框本身可点击，点击任务文字本身无效果。
 

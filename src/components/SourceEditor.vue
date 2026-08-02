@@ -36,12 +36,25 @@ function insertText(text: string, cursorOffset?: number, replaceSlashPrefix = fa
   }
 
   isApplyingExternalUpdate = true
-  view.dispatch({
-    changes: { from: start, to, insert: text },
-    selection: cursorOffset
-      ? { anchor: start + text.length - cursorOffset }
-      : { anchor: start + text.length },
-  })
+  if (replaceSlashPrefix) {
+    const line = view.state.doc.lineAt(start)
+    view.dispatch({
+      changes: [
+        { from: start, to },
+        { from: line.from, insert: text },
+      ],
+      selection: cursorOffset
+        ? { anchor: line.from + text.length - cursorOffset }
+        : { anchor: line.from + text.length },
+    })
+  } else {
+    view.dispatch({
+      changes: { from: start, to, insert: text },
+      selection: cursorOffset
+        ? { anchor: start + text.length - cursorOffset }
+        : { anchor: start + text.length },
+    })
+  }
   isApplyingExternalUpdate = false
   emit('update:modelValue', view.state.doc.toString())
   view.focus()
