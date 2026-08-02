@@ -253,7 +253,8 @@ origin: migrated from legacy ledger ("## DW-38"), 2026-08-02
 location: `src/components/SourceEditor.vue` 中 `watch(() => props.modelValue, ...)` 对任何外部内容变化统一走 `view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: next } })` 的全量替换路径；这是应用既有的、跨多个既有菜单项共享的内容同步机制（非本故事引入），但预览区勾选交互作为一种更细粒度的编辑操作，会因此对大文档产生不必要的撤销历史/滚动位置扰动，值得单独评估是否需要改为局部 change 事务。
 severity: low
 reason: 预览区任务 checkbox 点击后通过 `content.value` 整体重写驱动 `SourceEditor`，触发编辑器 `from:0 to:doc.length` 的全量替换事务，而非仅针对被切换那一行的局部编辑事务。
-status: open
+status: done 2026-08-02
+resolution: resolved by sweep bundle dw-preview-checkbox-targeted-edit
 
 ### DW-47: 剪贴板粘贴图片会无条件调用 `event.preventDefault()`，若剪贴板中同时含有图片以外的文本/HTML 内容，会被一并丢弃而非按原生行为一起粘贴。
 

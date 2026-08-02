@@ -5,6 +5,7 @@ import { EditorState } from '@codemirror/state'
 import { standardKeymap, history, historyKeymap, undo, redo, selectAll } from '@codemirror/commands'
 import type { ClipboardImagePayload } from '../lib/types'
 import { isSupportedClipboardImageType } from '../lib/image-assets'
+import { computeMinimalLineChange } from '../lib/source-editor-diff'
 
 export interface CursorPosition {
   line: number
@@ -196,8 +197,9 @@ watch(
     if (next === current) return
 
     isApplyingExternalUpdate = true
+    const change = computeMinimalLineChange(current, next ?? '', (offset) => view!.state.doc.lineAt(offset))
     view.dispatch({
-      changes: {
+      changes: change ?? {
         from: 0,
         to: view.state.doc.length,
         insert: next ?? '',
