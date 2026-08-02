@@ -6,7 +6,8 @@ origin: migrated from legacy ledger ("## DW-1"), 2026-08-02
 location: index.html:5
 severity: low
 reason: 移除或替换不存在的 favicon 资源，避免启动时 404 噪声。属于 polish 项，不影响功能，可延后处理。
-status: open
+status: done 2026-08-02
+resolution: already resolved: commit 61e7aa4 removed the <link rel="icon" href="/vite.svg"> tag from index.html; current index.html has no reference to /vite.svg.
 
 ### DW-19: ping 命令使用 async 但无 await，可改为同步函数
 
@@ -14,7 +15,8 @@ origin: migrated from legacy ledger ("## DW-2"), 2026-08-02
 location: src-tauri/src/commands/mod.rs:32
 severity: low
 reason: ping 命令无异步操作，改为同步函数可减少不必要的运行时开销。属于代码质量优化，不影响当前运行，可延后处理。
-status: open
+status: done 2026-08-02
+resolution: already resolved: commit 61e7aa4 changed `pub async fn ping()` to `pub fn ping()` in src-tauri/src/commands/mod.rs; the command is now synchronous.
 
 ### DW-20: thiserror 依赖已引入但当前未使用
 
@@ -30,7 +32,8 @@ origin: migrated from legacy ledger ("## DW-4"), 2026-08-02
 location: src-tauri/Cargo.toml:5
 severity: low
 reason: Cargo 的 `authors` 字段已标记为弃用，应移除或改用 `package.authors` 以外的元数据方式。属于维护性清理，不影响构建与运行，可延后处理。
-status: open
+status: done 2026-08-02
+resolution: already resolved: commit 61e7aa46bf7d388bfd48e8d1176a4f34c3e20c57 (git log --follow -p -- src-tauri/Cargo.toml) removed the deprecated `authors = ["Max"]` line; current src-tauri/Cargo.toml:1-8 contains no authors field.
 
 ### DW-22: Story 1.2 浅色模式防御未在代码层显式说明
 
@@ -38,7 +41,8 @@ origin: migrated from legacy ledger ("## DW-5"), 2026-08-02
 location: src/styles/app.css, src/main.ts
 severity: low
 reason: spec 要求收到浅色/深色切换事件时保持深色不变。当前实现为“不监听 prefers-color-scheme”，这本身符合 MVP 约束，但缺少显式注释或代码说明，容易让未来开发者误认为遗漏了浅色模式支持。后续在实现主题系统时，应显式注释或增加 `color-scheme: dark` 强制深色，避免误加浅色模式。
-status: open
+status: done 2026-08-02
+resolution: already resolved: src/styles/app.css and src/main.ts still register no prefers-color-scheme listener, but Story 6.2 (commit dcbeb86) introduced the full theme system (src/lib/themes.ts, themes.json, data-theme attribute) that explicitly and deliberately governs light/dark behavior, superseding the original 'undocumented dark-only default' concern.
 
 ### DW-23: Story 1.3 日志与错误处理可进一步结构化
 
@@ -54,7 +58,8 @@ origin: migrated from legacy ledger ("## DW-7"), 2026-08-02
 location: src-tauri/src/config.rs
 severity: low
 reason: `is_dir_writable` 通过写入 `.write_test` 文件验证写权限，删除失败时静默忽略。极端情况下可能留下临时文件。后续可改用 `tempfile` crate 或系统临时目录避免污染应用目录，同时确保清理。
-status: open
+status: done 2026-08-02
+resolution: already resolved: src-tauri/src/config.rs:107-112 now uses tempfile::NamedTempFile::new_in(dir) with an explicit .close() call for guaranteed cleanup, replacing the old manual .write_test file approach.
 
 ### DW-25: Story 1.4 前端错误降级占位不明确
 
@@ -62,7 +67,8 @@ origin: migrated from legacy ledger ("## DW-8"), 2026-08-02
 location: src/App.vue:19-32
 severity: minor
 reason: 当 `get_blank_document` 失败或命令不可用时，`filename` 保持初始值 `New_*.md`，用户可见不真实的占位文件名。当前仅通过 `console.error` 输出日志，未在 UI 上给出可见的错误状态或降级文件名。后续可在状态栏或标题栏显示通用错误状态，或提供 `New_Untitled.md` 等安全降级名称。
-status: open
+status: done 2026-08-02
+resolution: already resolved: src/App.vue:1055-1065 now sets filename to the safe fallback 'New_Untitled.md' and surfaces the failure via saveMessage when get_blank_document fails, instead of silently keeping an unreal placeholder name.
 
 ### DW-26: App.vue 中 .placeholder 样式未清理
 
@@ -70,7 +76,8 @@ origin: migrated from legacy ledger ("## DW-9"), 2026-08-02
 location: src/App.vue:95-103
 severity: low
 reason: Story 2.1 和 2.2 已用实际组件替换所有占位，但 scoped CSS 中仍保留 `.placeholder` 样式块。Dead code，不影响功能。
-status: open
+status: done 2026-08-02
+resolution: already resolved: grep for '.placeholder' in src/App.vue returns no matches; the dead CSS block described in the entry has already been removed.
 
 ### DW-27: PreviewPane onPreviewClick 危险协议分支 stopPropagation 冗余
 
@@ -78,7 +85,8 @@ origin: migrated from legacy ledger ("## DW-10"), 2026-08-02
 location: src/components/PreviewPane.vue:21-29
 severity: low
 reason: 对危险协议的 `stopPropagation` 在当前组件树中无实际效果（无父级响应），属于防御性冗余代码。不影响功能。
-status: open
+status: done 2026-08-02
+resolution: already resolved: src/components/PreviewPane.vue:65-90 contains no stopPropagation call in the dangerous-protocol click handler (only preventDefault), and `git log -p` for the file shows no historical stopPropagation usage to remove either — the described redundant code is not present.
 
 ### DW-28: Story 5.1 Splitter 缺少键盘与触屏交互
 
@@ -312,7 +320,8 @@ location: n/a
 source_spec: `7-2-clipboard-image-paste-and-local-storage.md`
 severity: low
 reason: The follow-up-review damping cap (limits.max_followup_reviews = 1) was spent with the story finalized (status: done, verify green) while the review pass still recommended an independent follow-up. The work was committed by bmad-loop run 20260801-121843-460e; this entry preserves the lingering recommendation for a deliberate later review.
-status: open
+status: done 2026-08-02
+resolution: already resolved: _bmad-output/implementation-artifacts/7-2-clipboard-image-paste-and-local-storage.md lines 42-97 record two completed follow-up review passes on 2026-08-01 (Review pass follow-up, Review pass follow-up 2), fulfilling the deferred recommendation.
 ### DW-56: HTML 导出复用 `save_document_as` 命令写入导出文件，该命令写入成功后会顺带放宽导出目标目录的 `asset://` 协议可访问范围，而导出的独立 HTML 文件本身并不依赖该协议渲染图片，属于非预期的权限面扩大副作用。
 
 origin: migrated from legacy ledger ("## DW-50"), 2026-08-02
