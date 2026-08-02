@@ -2,6 +2,8 @@
 defineProps<{
   message?: string
   status?: 'normal' | 'success' | 'failure'
+  themeMessage?: string
+  themeStatus?: 'unsaved' | 'success' | 'failure'
   line?: number
   column?: number
 }>()
@@ -13,6 +15,7 @@ defineProps<{
       {{ message || '准备就绪' }}
     </div>
     <div class="right">
+      <span v-if="themeMessage" class="theme-feedback" :class="themeStatus">{{ themeMessage }}</span>
       <span v-if="line !== undefined && column !== undefined">行 {{ line }}, 列 {{ column }}</span>
       <span class="doc-type">Markdown</span>
     </div>
@@ -47,6 +50,21 @@ defineProps<{
 
 .left.failure {
   color: var(--color-error);
+}
+
+.theme-feedback.success {
+  color: var(--color-success);
+}
+
+.theme-feedback.failure {
+  color: var(--color-error);
+}
+
+.theme-feedback {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 12rem;
 }
 
 .doc-type {

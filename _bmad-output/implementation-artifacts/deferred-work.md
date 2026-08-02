@@ -164,7 +164,8 @@ origin: migrated from legacy ledger ("## DW-28"), 2026-08-02
 location: `src-tauri/src/commands/config.rs` 中 `set_config`/`update_last_opened_file` 各自独立 `read_config` → 修改内存结构体 → `write_config`，无文件锁或原子合并，属于 4.x 系列引入的既有模式，本次仅新增 `theme_id` 字段沿用了该模式。
 severity: low
 reason: `set_config` 的读-改-写模式没有加锁，近乎同时的两次调用（例如切换主题与更改保存路径）可能互相覆盖对方写入的字段。
-status: open
+status: done 2026-08-02
+resolution: resolved by sweep bundle dw-config-theme-init-hardening
 
 ### DW-37: File 菜单及其新增的 Theme 子菜单仅能通过鼠标 `:hover`/`:focus-within` 展开，纯键盘用户无法聚焦并展开该子菜单或其中任一主题项。
 
@@ -190,7 +191,8 @@ origin: migrated from legacy ledger ("## DW-31"), 2026-08-02
 location: `src/App.vue` 的 `handleThemeSelect` 直接写入与自动保存、打开文件、另存为共用的 `saveStatus.value`/`saveMessage.value`，若用户在保存失败提示尚未处理时切换主题，失败提示会被主题切换消息静默覆盖；该单通道通知模式为既有设计，本次仅新增了一个写入者。
 severity: low
 reason: 主题切换复用了全局 `saveStatus`/`saveMessage` 通道用于反馈，可能覆盖并掩盖真实的文档保存成功/失败提示。
-status: open
+status: done 2026-08-02
+resolution: resolved by sweep bundle dw-config-theme-init-hardening
 
 ### DW-40: 主题 ID 与默认主题 ID 分别在 `src/lib/themes.ts`/`themes.json`（前端）与 `src-tauri/src/config.rs`（后端 `VALID_THEME_IDS`/`DEFAULT_THEME_ID`）两处独立维护，缺少构建期或运行期校验保证一致。
 
@@ -207,7 +209,8 @@ origin: migrated from legacy ledger ("## DW-33"), 2026-08-02
 location: `src/main.ts` 为预加载主题调用一次 `get_config`，`src/App.vue` 的 `onMounted` 又为读取 `savePath`/`lastOpenedFile` 再次调用同一命令，二者互不感知，属于冗余但非破坏性的重复初始化调用。
 severity: low
 reason: `main.ts` 的 `bootstrap()` 与 `App.vue` 的 `onMounted()` 在启动时各自独立调用一次 `get_config`，造成重复 IPC/磁盘读取。
-status: open
+status: done 2026-08-02
+resolution: resolved by sweep bundle dw-config-theme-init-hardening
 
 ### DW-42: `e2e/story-6-2.spec.ts` 对 AC3 的持久化验证依赖前端 Tauri mock 注入的 `get_config` 返回值模拟“重启”，并未真正验证 Rust 侧写入并重新读取 `config.json` 的完整闭环；同时缺少对 `set_config` 失败时主题回滚路径、以及配置中存有非法 `themeId` 时前端回退逻辑的测试覆盖。
 

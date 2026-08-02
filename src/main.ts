@@ -27,12 +27,13 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
 
 async function bootstrap() {
   applyTheme(defaultThemeId)
+  const configPromise = withTimeout(
+    invoke<CmdResult<AppConfig>>('get_config'),
+    CONFIG_PRELOAD_TIMEOUT_MS
+  )
 
   try {
-    const configRes = await withTimeout(
-      invoke<CmdResult<AppConfig>>('get_config'),
-      CONFIG_PRELOAD_TIMEOUT_MS
-    )
+    const configRes = await configPromise
     if (configRes.ok && configRes.data) {
       applyTheme(configRes.data.themeId)
     }
@@ -40,7 +41,7 @@ async function bootstrap() {
     console.warn('Failed to preload theme config:', error)
   }
 
-  createApp(App).mount('#app')
+  createApp(App, { configPromise }).mount('#app')
 }
 
 bootstrap()

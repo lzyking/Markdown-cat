@@ -7,6 +7,7 @@ use std::process::Command;
 
 const CONFLUENCE_TOKEN_SERVICE: &str = "markdown-cat-confluence";
 const CONFLUENCE_TOKEN_ACCOUNT: &str = "confluence-api-token";
+static CONFIG_WRITE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -81,6 +82,9 @@ pub fn set_config(
 ) -> CmdResult<()> {
     match config::resolve_writable_dir(&app_handle) {
         Ok(dir) => {
+            let _config_write_lock = CONFIG_WRITE_LOCK
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             let config_path = config::config_file_path(&dir);
             let mut cfg = config::read_config(&config_path).unwrap_or_default();
             if let Some(save_path) = save_path {
@@ -109,6 +113,9 @@ pub fn update_last_opened_file(
 ) -> CmdResult<()> {
     match config::resolve_writable_dir(&app_handle) {
         Ok(dir) => {
+            let _config_write_lock = CONFIG_WRITE_LOCK
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             let config_path = config::config_file_path(&dir);
             let mut cfg = config::read_config(&config_path).unwrap_or_default();
             cfg.last_opened_file = file_path;

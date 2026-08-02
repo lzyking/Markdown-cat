@@ -39,6 +39,7 @@ import type {
   SaveResult,
 } from './lib/types'
 
+const props = defineProps<{ configPromise?: Promise<CmdResult<AppConfig>> }>()
 const filename = ref('New_*.md')
 const content = ref('')
 const cursorPosition = ref<CursorPosition>({ line: 1, column: 1 })
@@ -88,6 +89,8 @@ type ExportKind = 'HTML' | 'PDF'
 
 const saveStatus = ref<SaveStatus>('unsaved')
 const saveMessage = ref('')
+const themeStatus = ref<SaveStatus>('unsaved')
+const themeMessage = ref('')
 const exportProgress = ref<ExportProgressState>({
   active: false,
   current: 0,
@@ -693,17 +696,17 @@ async function handleThemeSelect(themeId: string) {
     })
     if (!res.ok) {
       activeThemeId.value = applyTheme(previousThemeId)
-      saveStatus.value = 'failure'
-      saveMessage.value = `主题保存失败：${res.error || '未知错误'}`
+      themeStatus.value = 'failure'
+      themeMessage.value = `主题保存失败：${res.error || '未知错误'}`
       return
     }
 
-    saveStatus.value = 'success'
-    saveMessage.value = `主题已切换为 ${resolvedThemeId}`
+    themeStatus.value = 'success'
+    themeMessage.value = `主题已切换为 ${resolvedThemeId}`
   } catch (err: any) {
     activeThemeId.value = applyTheme(previousThemeId)
-    saveStatus.value = 'failure'
-    saveMessage.value = `主题保存异常：${err?.message || '系统错误'}`
+    themeStatus.value = 'failure'
+    themeMessage.value = `主题保存异常：${err?.message || '系统错误'}`
   }
 }
 
@@ -1112,10 +1115,27 @@ function onWindowResize() {
 
 onMounted(async () => {
   try {
-    const configRes = await invoke<CmdResult<AppConfig>>('get_config')
+    let configRes: CmdResult<AppConfig> | undefined
+    if (props.configPromise) {
+      try {
+        configRes = await props.configPromise
+      } catch (error) {
+        // 共享的启动期预取（main.ts）超时或失败时，做一次有界重试，
+        // 避免因偶发的慢 IPC 而永久丢失 savePath/lastOpenedFile 的恢复能力。
+        console.warn('Shared config preload failed, retrying once:', error)
+        try {
+          configRes = await invoke<CmdResult<AppConfig>>('get_config')
+        } catch (retryError) {
+          console.warn('Config retry failed:', retryError)
+          configRes = undefined
+        }
+      }
+    } else {
+      configRes = await invoke<CmdResult<AppConfig>>('get_config')
+    }
     let lastFileLoaded = false
 
-    if (configRes.ok && configRes.data) {
+    if (configRes?.ok && configRes.data) {
       if (configRes.data.savePath) {
         currentSavePath.value = configRes.data.savePath
       }
@@ -1151,7 +1171,7 @@ onMounted(async () => {
         currentSavePath.value = dirRes.data
       }
     }
-    if (!configRes.ok) {
+    if (!configRes?.ok) {
       saveStatus.value = 'unsaved'
       saveMessage.value = '已回退到默认保存路径'
     }
@@ -1265,6 +1285,8 @@ if ((window as any).__TAURI_MOCK__) {
       :column="cursorPosition.column"
       :message="saveMessage"
       :status="statusBarStatus"
+      :theme-message="themeMessage"
+      :theme-status="themeStatus"
     />
 
     <div
