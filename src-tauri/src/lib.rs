@@ -20,6 +20,7 @@ static PANIC_LOG_PATH: Mutex<Option<PathBuf>> = Mutex::new(None);
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     install_panic_logger();
+    tracing_subscriber::fmt::try_init().ok();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_fs::init())

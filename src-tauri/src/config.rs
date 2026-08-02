@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 use tauri::Manager;
 
@@ -23,6 +24,40 @@ const CONFIG_FILE_NAME: &str = "config.json";
 const FALLBACK_DIR_NAME: &str = "My Markdown";
 const DEFAULT_THEME_ID: &str = "midnight-slate";
 const APP_IDENTIFIER: &str = "com.markdowncat.dev";
+
+/// 配置模块内部错误类型，将 `ERR_*` 错误码与底层 I/O 错误绑定，
+/// 避免在多处调用点重复拼接 `format!("{code}: {source}")`。
+/// 仅用于内部构造错误字符串；对外签名仍统一返回 `Result<T, String>`。
+#[derive(Debug, thiserror::Error)]
+#[error("{code}: {source}")]
+pub(crate) struct ConfigError {
+    code: &'static str,
+    #[source]
+    source: io::Error,
+}
+
+impl ConfigError {
+    fn app_dir_not_writable(source: io::Error) -> Self {
+        Self {
+            code: ERR_APP_DIR_NOT_WRITABLE,
+            source,
+        }
+    }
+
+    fn config_write_failed(source: io::Error) -> Self {
+        Self {
+            code: ERR_CONFIG_WRITE_FAILED,
+            source,
+        }
+    }
+
+    fn config_read_failed(source: io::Error) -> Self {
+        Self {
+            code: ERR_CONFIG_READ_FAILED,
+            source,
+        }
+    }
+}
 
 /// 有效主题 ID 列表，需与 `src/lib/themes.json` 中的 id 保持一致。
 pub const VALID_THEME_IDS: &[&str] = &[
@@ -128,7 +163,7 @@ pub fn resolve_writable_dir(app_handle: &tauri::AppHandle) -> Result<PathBuf, St
     let app_data_dir = app_handle
         .path()
         .app_data_dir()
-        .map_err(|e| format!("{}: {}", ERR_APP_DIR_NOT_WRITABLE, e))?;
+        .map_err(|e| ConfigError::app_dir_not_writable(io::Error::other(e)).to_string())?;
 
     if is_dir_writable(&app_data_dir).is_ok() {
         return Ok(app_data_dir);
@@ -166,25 +201,25 @@ pub fn read_config(config_path: &Path) -> Result<AppConfig, String> {
         Ok(content) => match serde_json::from_str::<AppConfig>(&content) {
             Ok(config) => Ok(config),
             Err(e) => {
-                eprintln!("Config parse failed, using defaults: {}", e);
+                tracing::warn!(path = %config_path.display(), error = %e, "config parse failed, using defaults");
                 Ok(AppConfig::default())
             }
         },
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(AppConfig::default()),
-        Err(e) => Err(format!("{}: {}", ERR_CONFIG_READ_FAILED, e)),
+        Err(e) => Err(ConfigError::config_read_failed(e).to_string()),
     }
 }
 
 /// 将配置以 JSON 格式写入指定路径。
 pub fn write_config(config_path: &Path, config: &AppConfig) -> Result<(), String> {
     if let Some(parent) = config_path.parent() {
-        fs::create_dir_all(parent).map_err(|e| format!("{}: {}", ERR_CONFIG_WRITE_FAILED, e))?;
+        fs::create_dir_all(parent).map_err(|e| ConfigError::config_write_failed(e).to_string())?;
     }
 
     let content = serde_json::to_string_pretty(config)
-        .map_err(|e| format!("{}: {}", ERR_CONFIG_WRITE_FAILED, e))?;
+        .map_err(|e| ConfigError::config_write_failed(io::Error::other(e)).to_string())?;
 
-    fs::write(config_path, content).map_err(|e| format!("{}: {}", ERR_CONFIG_WRITE_FAILED, e))
+    fs::write(config_path, content).map_err(|e| ConfigError::config_write_failed(e).to_string())
 }
 
 /// 返回配置文件的完整路径。
@@ -229,4 +264,36 @@ fn home_dir() -> Option<PathBuf> {
     env::var_os("HOME")
         .map(PathBuf::from)
         .filter(|dir| dir.is_absolute())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        ConfigError, ERR_APP_DIR_NOT_WRITABLE, ERR_CONFIG_READ_FAILED, ERR_CONFIG_WRITE_FAILED,
+    };
+    use std::io;
+
+    #[test]
+    fn config_error_display_matches_app_dir_prefix() {
+        let error = ConfigError::app_dir_not_writable(io::Error::other("boom"));
+        assert_eq!(error.to_string(), format!("{ERR_APP_DIR_NOT_WRITABLE}: boom"));
+    }
+
+    #[test]
+    fn config_error_display_matches_write_prefix() {
+        let error = ConfigError::config_write_failed(io::Error::other("disk full"));
+        assert_eq!(
+            error.to_string(),
+            format!("{ERR_CONFIG_WRITE_FAILED}: disk full")
+        );
+    }
+
+    #[test]
+    fn config_error_display_matches_read_prefix() {
+        let error = ConfigError::config_read_failed(io::Error::other("permission denied"));
+        assert_eq!(
+            error.to_string(),
+            format!("{ERR_CONFIG_READ_FAILED}: permission denied")
+        );
+    }
 }

@@ -24,7 +24,8 @@ origin: migrated from legacy ledger ("## DW-3"), 2026-08-02
 location: src-tauri/Cargo.toml:28
 severity: low
 reason: thiserror 计划用于后续 Story 的错误处理，当前未使用。为避免误删后重复添加，保持现状，延后到实现错误处理层时统一使用或移除。
-status: open
+status: done 2026-08-02
+resolution: resolved by sweep bundle dw-backend-structured-error-logging
 
 ### DW-21: Cargo.toml 中 authors 字段已弃用
 
@@ -50,7 +51,8 @@ origin: migrated from legacy ledger ("## DW-6"), 2026-08-02
 location: src-tauri/src/config.rs, src-tauri/src/commands/config.rs
 severity: low
 reason: 当前配置模块使用 `eprintln!` 输出警告与错误，后续 Epic 实现持久化错误处理与日志时，应统一替换为结构化日志（如 `tauri_plugin_log` 或 `tracing`），避免日志散落到 stderr；同时可将 `ERR_APP_DIR_NOT_WRITABLE` 等错误码封装为自定义错误类型，与 locale 错误消息映射解耦。
-status: open
+status: done 2026-08-02
+resolution: resolved by sweep bundle dw-backend-structured-error-logging
 
 ### DW-24: Story 1.3 `.write_test` 临时文件残留风险
 

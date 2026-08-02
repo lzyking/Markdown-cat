@@ -60,13 +60,13 @@ pub fn get_config(app_handle: tauri::AppHandle) -> CmdResult<AppConfig> {
             match config::read_config(&config_path) {
                 Ok(cfg) => CmdResult::success(cfg),
                 Err(e) => {
-                    eprintln!("Config read failed, using defaults: {}", e);
+                    tracing::warn!(path = %config_path.display(), error = %e, "config read failed, using defaults");
                     CmdResult::success(AppConfig::default())
                 }
             }
         }
         Err(e) => {
-            eprintln!("Writable dir resolve failed, using defaults: {}", e);
+            tracing::warn!(error = %e, "writable dir resolve failed, using defaults");
             CmdResult::success(AppConfig::default())
         }
     }
