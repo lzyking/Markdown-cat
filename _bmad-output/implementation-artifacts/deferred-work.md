@@ -471,7 +471,8 @@ origin: migrated from legacy ledger ("review of spec-dw-37-38-menu-keyboard-acce
 location: src/components/MenuBar.vue (`.menu-item`/`.submenu-trigger`)
 severity: low
 reason: 审查 DW-37/DW-38 键盘可达性修复的 diff 时确认该缺口在改动前后均存在（`aria-haspopup` 早已存在于原始代码），本次改动只新增了 tabindex/keydown 使元素可达，并未引入或修复 `aria-expanded` 状态，属于本次改动之外的既有无障碍语义缺口。
-status: open
+status: done 2026-08-02
+resolution: resolved by sweep bundle dw-menu-aria-semantics
 
 ### DW-68: `MenuBar.vue` 中 `.menu-dropdown`（顶层菜单容器）从未声明 `role="menu"`，而其内部 `.menu-row` 子项却使用 `role="menuitem"`，与 `.submenu-dropdown`（已正确声明 `role="menu"`）不一致，构成无障碍角色树的结构性不一致。
 
@@ -479,7 +480,8 @@ origin: migrated from legacy ledger ("review of spec-dw-37-38-menu-keyboard-acce
 location: src/components/MenuBar.vue (`.menu-dropdown` 顶层容器 vs `.submenu-dropdown`)
 severity: low
 reason: 对比 `.submenu-dropdown` 已有 `role="menu"` 而 `.menu-dropdown` 从未添加该属性（本次改动未涉及该属性），说明这是既有实现遗留的不一致，非本次 DW-37/DW-38 修复引入。
-status: open
+status: done 2026-08-02
+resolution: resolved by sweep bundle dw-menu-aria-semantics
 
 - source_spec: `_bmad-output/implementation-artifacts/spec-dw-31-33-theme-visual-token-consistency-2.md`
   summary: `src/styles/preview-export.css` still hard-codes the pre-existing `rgba(255, 255, 255, 0.05)`/`rgba(255, 255, 255, 0.02)` table header/zebra-stripe overlay literals instead of the new `--color-overlay-header`/`--color-overlay-zebra` tokens, so HTML exports of tables will not match the live `PreviewPane.vue` rendering once a light theme is active.
@@ -492,3 +494,7 @@ status: open
 - source_spec: `_bmad-output/implementation-artifacts/spec-dw-31-33-theme-visual-token-consistency-2.md`
   summary: `src/components/PublishConfluenceModal.vue` hard-codes a confirm-button text color (`color: white`) and references an undefined `--color-danger` fallback variable instead of the token-system `--color-error`, so it neither adopts `--color-accent-foreground` nor the new per-theme error colors.
   evidence: Confirmed via `grep -n "color: white\|color-danger" src/components/PublishConfluenceModal.vue` (lines 263, 272); this file was explicitly excluded from the DW-31/32/33 scope and the hardcode predates this change.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-dw-67-68-menu-aria-semantics.md`
+  summary: The two `.menu-dropdown` containers (and the pre-existing `.submenu-dropdown`) now all declare `role="menu"` but none has an `aria-label`/`aria-labelledby` tying it back to its trigger text ("Markdown Cat" / "文件" / "Theme"), so a screen reader announces "menu" with no distinguishing name when moving between them.
+  evidence: Confirmed via `grep -n 'role="menu"' src/components/MenuBar.vue` — none of the three `role="menu"` elements has an accompanying `aria-label`/`aria-labelledby`; `.submenu-dropdown` already lacked this before the DW-67/68 fix, and DW-67/68's scope was explicitly limited to `aria-expanded` and `role="menu"` parity only.

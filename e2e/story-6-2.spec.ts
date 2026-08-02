@@ -117,28 +117,39 @@ test.describe('Story 6.2：File 菜单 Theme 子菜单选择与配置持久化',
     const themeDropdown = themeTrigger.locator('.submenu-dropdown')
     const firstThemeOption = themeDropdown.locator('.theme-option').first()
 
+    await expect(markdownCatDropdown).toHaveAttribute('role', 'menu')
+    await expect(fileDropdown).toHaveAttribute('role', 'menu')
+
     await tabUntilFocused(page, markdownCatMenu)
     await expect(markdownCatDropdown).toBeVisible()
+    await expect(markdownCatMenu).toHaveAttribute('aria-expanded', 'true')
     await page.keyboard.press('Tab')
     await expect(markdownCatSettingsRow).toBeFocused()
+    await expect(markdownCatMenu).toHaveAttribute('aria-expanded', 'true')
     await page.keyboard.press('Tab')
 
     await expect(fileMenu).toBeFocused()
     await expect(fileDropdown).toBeVisible()
+    await expect(markdownCatMenu).toHaveAttribute('aria-expanded', 'false')
+    await expect(fileMenu).toHaveAttribute('aria-expanded', 'true')
 
     await page.keyboard.press('Tab')
     await expect(openRow).toBeFocused()
     await expect(fileDropdown).toBeVisible()
+    await expect(fileMenu).toHaveAttribute('aria-expanded', 'true')
 
     await tabUntilFocused(page, themeTrigger)
     await expect(themeTrigger).toBeFocused()
     await expect(fileDropdown).toBeVisible()
+    await expect(themeTrigger).toHaveAttribute('aria-expanded', 'true')
 
     const themeIdBeforeSelection = await page.locator('html').getAttribute('data-theme')
 
     await page.keyboard.press('Enter')
     await expect(themeDropdown).toBeVisible()
     await expect(firstThemeOption).toBeFocused()
+    await expect(themeTrigger).toHaveAttribute('aria-expanded', 'true')
+    await expect(fileMenu).toHaveAttribute('aria-expanded', 'true')
 
     await firstThemeOption.press('Enter')
     await expect(firstThemeOption.locator('.menu-check')).toHaveText('✓')
@@ -150,6 +161,8 @@ test.describe('Story 6.2：File 菜单 Theme 子菜单选择与配置持久化',
     await expect(firstThemeOption).not.toBeFocused()
     await expect(fileDropdown).toBeHidden()
     await expect(themeDropdown).toBeHidden()
+    await expect(fileMenu).toHaveAttribute('aria-expanded', 'false')
+    await expect(themeTrigger).toHaveAttribute('aria-expanded', 'false')
   })
 
   // TID: S6.2-E2E-005

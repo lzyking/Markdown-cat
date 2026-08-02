@@ -23,6 +23,64 @@ const darkThemes = themes.filter((theme) => theme.mode === 'dark')
 const firstFocusableThemeId = lightThemes[0]?.id ?? darkThemes[0]?.id
 const firstThemeOptionRef = ref<HTMLElement | null>(null)
 
+function useHoverFocusExpanded() {
+  const isHovered = ref(false)
+  const isFocusWithin = ref(false)
+  const isOpen = ref(false)
+
+  function syncIsOpen() {
+    isOpen.value = isHovered.value || isFocusWithin.value
+  }
+
+  function onMouseEnter() {
+    isHovered.value = true
+    syncIsOpen()
+  }
+
+  function onMouseLeave() {
+    isHovered.value = false
+    syncIsOpen()
+  }
+
+  function onFocusIn() {
+    isFocusWithin.value = true
+    syncIsOpen()
+  }
+
+  function onFocusOut(event: FocusEvent) {
+    const currentTarget = event.currentTarget as HTMLElement | null
+    const relatedTarget = event.relatedTarget as Node | null
+
+    if (relatedTarget && currentTarget?.contains(relatedTarget)) {
+      return
+    }
+
+    // Some WebKit builds (relevant to this Tauri app's macOS webview) report
+    // `relatedTarget` as null even though focus actually moved to a sibling
+    // element still inside the container. Fall back to `document.activeElement`
+    // (already updated by the time `focusout` fires) before deciding focus
+    // truly left the container.
+    if (!relatedTarget && currentTarget?.contains(document.activeElement)) {
+      return
+    }
+
+    isFocusWithin.value = false
+    syncIsOpen()
+  }
+
+  return {
+    isOpen,
+    onMouseEnter,
+    onMouseLeave,
+    onFocusIn,
+    onFocusOut,
+  }
+}
+
+const markdownCatMenuExpanded = useHoverFocusExpanded()
+const fileMenuExpanded = useHoverFocusExpanded()
+const themeSubmenuExpanded = useHoverFocusExpanded()
+
 function resolveFocusableElement(el: Element | ComponentPublicInstance | null) {
   if (el instanceof HTMLElement) {
     return el
@@ -104,9 +162,19 @@ function onSubmenuTriggerKeydown(e: KeyboardEvent) {
 
 <template>
   <div class="menu-bar" role="menubar">
-    <div class="menu-item" tabindex="0" role="menuitem" aria-haspopup="true">
+    <div
+      class="menu-item"
+      tabindex="0"
+      role="menuitem"
+      aria-haspopup="true"
+      :aria-expanded="markdownCatMenuExpanded.isOpen.value"
+      @mouseenter="markdownCatMenuExpanded.onMouseEnter"
+      @mouseleave="markdownCatMenuExpanded.onMouseLeave"
+      @focusin="markdownCatMenuExpanded.onFocusIn"
+      @focusout="markdownCatMenuExpanded.onFocusOut"
+    >
       Markdown Cat
-      <div class="menu-dropdown">
+      <div class="menu-dropdown" role="menu">
         <div
           class="menu-row"
           tabindex="0"
@@ -118,9 +186,19 @@ function onSubmenuTriggerKeydown(e: KeyboardEvent) {
         </div>
       </div>
     </div>
-    <div class="menu-item" tabindex="0" role="menuitem" aria-haspopup="true">
+    <div
+      class="menu-item"
+      tabindex="0"
+      role="menuitem"
+      aria-haspopup="true"
+      :aria-expanded="fileMenuExpanded.isOpen.value"
+      @mouseenter="fileMenuExpanded.onMouseEnter"
+      @mouseleave="fileMenuExpanded.onMouseLeave"
+      @focusin="fileMenuExpanded.onFocusIn"
+      @focusout="fileMenuExpanded.onFocusOut"
+    >
       文件
-      <div class="menu-dropdown">
+      <div class="menu-dropdown" role="menu">
         <div class="menu-row" tabindex="0" role="menuitem" @click="openFile" @keydown="onMenuRowKeydown($event, openFile)">
           打开文件 (Open)…
         </div>
@@ -166,6 +244,11 @@ function onSubmenuTriggerKeydown(e: KeyboardEvent) {
           tabindex="0"
           role="menuitem"
           aria-haspopup="true"
+          :aria-expanded="themeSubmenuExpanded.isOpen.value"
+          @mouseenter="themeSubmenuExpanded.onMouseEnter"
+          @mouseleave="themeSubmenuExpanded.onMouseLeave"
+          @focusin="themeSubmenuExpanded.onFocusIn"
+          @focusout="themeSubmenuExpanded.onFocusOut"
           @keydown="onSubmenuTriggerKeydown"
         >
           <span>Theme</span>
