@@ -379,6 +379,7 @@ location: src/lib/export-html.ts (exportSelfContainedHtml); src-tauri/src/comman
 severity: high
 reason: 当本地图片因体积超过 10MB（`LOCAL_IMAGE_EMBED_LIMIT_BYTES`）或路径无法解析而未被内嵌为 base64 时，`exportSelfContainedHtml` 会保留原始相对 `src` 并仅附加一条警告（`src/lib/export-html.ts` 约第 268-278 行）。无论是 HTML 导出（`save_document_as` 写入用户选择的任意目标目录）还是 PDF 导出（`pdf_export.rs` 将自包含 HTML 写入以导出目标路径的父目录为基准的临时文件），后续相对路径解析都以导出目标目录、而非原始文档所在目录（`documentBaseDir`）为基准，一旦两者不同，这些未内嵌的图片在导出产物中会直接失效/无法显示。该缺口源自 8-1 引入的 `exportSelfContainedHtml`/`documentBaseDir` 设计，并非 8-2 新增，但本轮针对 PDF 导出 diff 的评审重新验证并确认其依然存在，故记录以待后续统一修复（例如导出前将超限图片也内嵌，或在导出产物中改写为绝对路径/文档目录相对路径）。
 status: open
+decision: 2026-08-02 Rewrite unembeddable image src to absolute paths (or copy files alongside export) at export time — In exportSelfContainedHtml, when a local image can't be embedded as base64, rewrite its src to an absolute path derived from documentBaseDir, or copy the referenced file into the export target directory next to the output and rewrite src to the new relative path, for both the HTML export path and the temporary HTML written by pdf_export.rs, so the reference resolves correctly regardless of where the export lands.
 
 ### DW-57: Confluence 配置允许保存空的 Base URL / 用户名 / Space Key
 
