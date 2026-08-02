@@ -17,6 +17,22 @@ test.describe('Story 6.2：File 菜单 Theme 子菜单选择与配置持久化',
     return themeTrigger
   }
 
+  async function tabUntilFocused(
+    page: import('@playwright/test').Page,
+    locator: import('@playwright/test').Locator,
+    maxTabs = 12,
+  ) {
+    for (let index = 0; index < maxTabs; index += 1) {
+      const isFocused = await locator.evaluate((element) => element === document.activeElement).catch(() => false)
+      if (isFocused) {
+        return
+      }
+      await page.keyboard.press('Tab')
+    }
+
+    await expect(locator).toBeFocused()
+  }
+
   // TID: S6.2-E2E-001
   // Priority: P1
   // AC1: File 菜单集成 Theme 子菜单，划分 Light Themes / Dark Themes 两个小节，各展示 5 种主题。
@@ -84,5 +100,84 @@ test.describe('Story 6.2：File 菜单 Theme 子菜单选择与配置持久化',
     await page.waitForSelector('.source-editor .cm-editor')
 
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'nord-light')
+  })
+
+  // TID: S6.2-E2E-004
+  // Priority: P1
+  // DW-37/DW-38: 纯键盘 Tab 链路可到达 File 菜单、Theme 子菜单及首个主题按钮，并可用 Enter 完成主题切换与 Escape 收起菜单。
+  test('纯键盘 Tab 链路应可进入 File 菜单与 Theme 子菜单并完成主题切换', async ({ page }) => {
+    const topLevelMenus = page.locator('.menu-bar .menu-item')
+    const markdownCatMenu = topLevelMenus.filter({ hasText: 'Markdown Cat' })
+    const markdownCatDropdown = markdownCatMenu.locator('.menu-dropdown')
+    const markdownCatSettingsRow = markdownCatDropdown.locator('.menu-row', { hasText: '设置保存路径…' })
+    const fileMenu = topLevelMenus.filter({ hasText: '文件' })
+    const fileDropdown = fileMenu.locator('.menu-dropdown')
+    const openRow = fileDropdown.locator('.menu-row', { hasText: '打开文件 (Open)…' })
+    const themeTrigger = fileDropdown.locator('.submenu-trigger', { hasText: 'Theme' })
+    const themeDropdown = themeTrigger.locator('.submenu-dropdown')
+    const firstThemeOption = themeDropdown.locator('.theme-option').first()
+
+    await tabUntilFocused(page, markdownCatMenu)
+    await expect(markdownCatDropdown).toBeVisible()
+    await page.keyboard.press('Tab')
+    await expect(markdownCatSettingsRow).toBeFocused()
+    await page.keyboard.press('Tab')
+
+    await expect(fileMenu).toBeFocused()
+    await expect(fileDropdown).toBeVisible()
+
+    await page.keyboard.press('Tab')
+    await expect(openRow).toBeFocused()
+    await expect(fileDropdown).toBeVisible()
+
+    await tabUntilFocused(page, themeTrigger)
+    await expect(themeTrigger).toBeFocused()
+    await expect(fileDropdown).toBeVisible()
+
+    const themeIdBeforeSelection = await page.locator('html').getAttribute('data-theme')
+
+    await page.keyboard.press('Enter')
+    await expect(themeDropdown).toBeVisible()
+    await expect(firstThemeOption).toBeFocused()
+
+    await firstThemeOption.press('Enter')
+    await expect(firstThemeOption.locator('.menu-check')).toHaveText('✓')
+    await expect
+      .poll(() => page.locator('html').getAttribute('data-theme'))
+      .not.toBe(themeIdBeforeSelection)
+
+    await page.keyboard.press('Escape')
+    await expect(firstThemeOption).not.toBeFocused()
+    await expect(fileDropdown).toBeHidden()
+    await expect(themeDropdown).toBeHidden()
+  })
+
+  // TID: S6.2-E2E-005
+  // Priority: P1
+  // DW-37/DW-38: 菜单行应可聚焦并用键盘激活，Escape 可使当前聚焦菜单行失焦并关闭对应下拉菜单。
+  test('聚焦菜单行后按 Space 应触发与点击等价的动作，按 Escape 应关闭菜单', async ({ page }) => {
+    const fileMenu = page.locator('.menu-bar .menu-item', { hasText: '文件' })
+    const fileDropdown = fileMenu.locator('.menu-dropdown')
+    const openRow = fileDropdown.locator('.menu-row', { hasText: '打开文件 (Open)…' })
+
+    await fileMenu.focus()
+    await expect(fileDropdown).toBeVisible()
+
+    await openRow.focus()
+    await expect(openRow).toBeFocused()
+    await expect(fileDropdown).toBeVisible()
+
+    await openRow.press(' ')
+
+    await expect.poll(async () => {
+      const entries = await page.evaluate(() => (window as any).__TAURI_MOCK__.dialogInvocations as Array<any>)
+      return entries.filter((entry) => entry.method === 'open').length
+    }).toBe(1)
+
+    await openRow.focus()
+    await openRow.press('Escape')
+
+    await expect(openRow).not.toBeFocused()
+    await expect(fileDropdown).toBeHidden()
   })
 })

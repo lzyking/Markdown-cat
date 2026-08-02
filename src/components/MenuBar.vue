@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ref, type ComponentPublicInstance } from 'vue'
 import { themes } from '../lib/themes'
 
 const props = defineProps<{
@@ -17,6 +18,28 @@ const emit = defineEmits<{
 
 const lightThemes = themes.filter((theme) => theme.mode === 'light')
 const darkThemes = themes.filter((theme) => theme.mode === 'dark')
+// 子菜单展开后键盘焦点的落点：优先取 Light Themes 首项，若为空（如主题配置被清空）则回退到 Dark Themes 首项，
+// 保证 Theme 触发器的 keydown 处理始终有一个可聚焦目标。
+const firstFocusableThemeId = lightThemes[0]?.id ?? darkThemes[0]?.id
+const firstThemeOptionRef = ref<HTMLElement | null>(null)
+
+function resolveFocusableElement(el: Element | ComponentPublicInstance | null) {
+  if (el instanceof HTMLElement) {
+    return el
+  }
+
+  if (el && '$el' in el && el.$el instanceof HTMLElement) {
+    return el.$el
+  }
+
+  return null
+}
+
+function setFirstThemeOptionRef(el: Element | ComponentPublicInstance | null, themeId: string) {
+  if (themeId === firstFocusableThemeId) {
+    firstThemeOptionRef.value = resolveFocusableElement(el)
+  }
+}
 
 function openFile() {
   emit('open-file')
@@ -45,6 +68,38 @@ function openSettings() {
 function selectTheme(themeId: string) {
   emit('select-theme', themeId)
 }
+
+function onMenuRowKeydown(e: KeyboardEvent, action: () => void) {
+  if (e.key === 'Enter' || e.key === ' ') {
+    e.preventDefault()
+    action()
+    return
+  }
+
+  if (e.key === 'Escape') {
+    ;(e.currentTarget as HTMLElement).blur()
+  }
+}
+
+function focusFirstThemeOption() {
+  firstThemeOptionRef.value?.focus()
+}
+
+function onSubmenuTriggerKeydown(e: KeyboardEvent) {
+  if (e.target !== e.currentTarget) {
+    return
+  }
+
+  if (e.key === 'Enter' || e.key === ' ' || e.key === 'ArrowRight') {
+    e.preventDefault()
+    focusFirstThemeOption()
+    return
+  }
+
+  if (e.key === 'Escape') {
+    ;(e.currentTarget as HTMLElement).blur()
+  }
+}
 </script>
 
 <template>
@@ -52,19 +107,67 @@ function selectTheme(themeId: string) {
     <div class="menu-item" tabindex="0" role="menuitem" aria-haspopup="true">
       Markdown Cat
       <div class="menu-dropdown">
-        <div class="menu-row" role="menuitem" @click="openSettings">设置保存路径…</div>
+        <div
+          class="menu-row"
+          tabindex="0"
+          role="menuitem"
+          @click="openSettings"
+          @keydown="onMenuRowKeydown($event, openSettings)"
+        >
+          设置保存路径…
+        </div>
       </div>
     </div>
     <div class="menu-item" tabindex="0" role="menuitem" aria-haspopup="true">
       文件
       <div class="menu-dropdown">
-        <div class="menu-row" role="menuitem" @click="openFile">打开文件 (Open)…</div>
-        <div class="menu-row" role="menuitem" @click="saveAsFile">另存为 (Save As)…</div>
-        <div class="menu-row" role="menuitem" @click="exportHtml">导出为 HTML (Export as HTML)…</div>
-        <div class="menu-row" role="menuitem" @click="exportPdf">导出为 PDF (Export as PDF)…</div>
-        <div class="menu-row" role="menuitem" @click="publishConfluence">发布到 Confluence…</div>
+        <div class="menu-row" tabindex="0" role="menuitem" @click="openFile" @keydown="onMenuRowKeydown($event, openFile)">
+          打开文件 (Open)…
+        </div>
+        <div
+          class="menu-row"
+          tabindex="0"
+          role="menuitem"
+          @click="saveAsFile"
+          @keydown="onMenuRowKeydown($event, saveAsFile)"
+        >
+          另存为 (Save As)…
+        </div>
+        <div
+          class="menu-row"
+          tabindex="0"
+          role="menuitem"
+          @click="exportHtml"
+          @keydown="onMenuRowKeydown($event, exportHtml)"
+        >
+          导出为 HTML (Export as HTML)…
+        </div>
+        <div
+          class="menu-row"
+          tabindex="0"
+          role="menuitem"
+          @click="exportPdf"
+          @keydown="onMenuRowKeydown($event, exportPdf)"
+        >
+          导出为 PDF (Export as PDF)…
+        </div>
+        <div
+          class="menu-row"
+          tabindex="0"
+          role="menuitem"
+          @click="publishConfluence"
+          @keydown="onMenuRowKeydown($event, publishConfluence)"
+        >
+          发布到 Confluence…
+        </div>
         <div class="menu-divider"></div>
-        <div class="menu-row submenu-trigger" role="menuitem" aria-haspopup="true">
+        <div
+          class="menu-row submenu-trigger"
+          tabindex="0"
+          role="menuitem"
+          aria-haspopup="true"
+          @keydown="onSubmenuTriggerKeydown"
+        >
           <span>Theme</span>
           <span class="submenu-arrow" aria-hidden="true">›</span>
           <div class="submenu-dropdown" role="menu">
@@ -77,7 +180,9 @@ function selectTheme(themeId: string) {
                 class="theme-option"
                 role="menuitemradio"
                 :aria-checked="props.activeThemeId === theme.id"
+                :ref="(el) => setFirstThemeOptionRef(el, theme.id)"
                 @click.stop="selectTheme(theme.id)"
+                @keydown.esc="($event.currentTarget as HTMLElement)?.blur()"
               >
                 <span class="menu-check" aria-hidden="true">
                   {{ props.activeThemeId === theme.id ? '✓' : '' }}
@@ -96,6 +201,7 @@ function selectTheme(themeId: string) {
                 role="menuitemradio"
                 :aria-checked="props.activeThemeId === theme.id"
                 @click.stop="selectTheme(theme.id)"
+                @keydown.esc="($event.currentTarget as HTMLElement)?.blur()"
               >
                 <span class="menu-check" aria-hidden="true">
                   {{ props.activeThemeId === theme.id ? '✓' : '' }}
@@ -106,7 +212,15 @@ function selectTheme(themeId: string) {
           </div>
         </div>
         <div class="menu-divider"></div>
-        <div class="menu-row" role="menuitem" @click="openSettings">设置默认保存路径…</div>
+        <div
+          class="menu-row"
+          tabindex="0"
+          role="menuitem"
+          @click="openSettings"
+          @keydown="onMenuRowKeydown($event, openSettings)"
+        >
+          设置默认保存路径…
+        </div>
       </div>
     </div>
     <div class="menu-item disabled" role="menuitem" aria-disabled="true">编辑</div>
@@ -159,7 +273,7 @@ function selectTheme(themeId: string) {
   box-shadow: var(--shadow-dialog);
 }
 
-.menu-item:focus .menu-dropdown,
+.menu-item:focus-within .menu-dropdown,
 .menu-item:hover .menu-dropdown {
   display: block;
 }
@@ -176,6 +290,13 @@ function selectTheme(themeId: string) {
 
 .menu-row:hover {
   background: var(--color-background-surface);
+}
+
+.menu-row:focus-visible,
+.submenu-trigger:focus-visible,
+.theme-option:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
 }
 
 .menu-divider {

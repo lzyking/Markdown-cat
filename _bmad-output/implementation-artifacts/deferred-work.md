@@ -172,7 +172,8 @@ origin: migrated from legacy ledger ("## DW-29"), 2026-08-02
 location: `src/components/MenuBar.vue` 中 `.menu-dropdown`/`.submenu-dropdown` 的展开逻辑完全依赖 CSS `:hover`/`:focus-within`，子菜单触发器与主题按钮之间没有可达的键盘聚焦路径；这是延续自更早期 story 的既有菜单交互模式，本次仅新增了第二层子菜单。
 severity: low
 reason: File 菜单及其新增的 Theme 子菜单仅能通过鼠标 `:hover`/`:focus-within` 展开，纯键盘用户无法聚焦并展开该子菜单或其中任一主题项。
-status: open
+status: done 2026-08-02
+resolution: resolved by sweep bundle dw-menu-keyboard-accessibility
 
 ### DW-38: Theme 子菜单触发器（`.submenu-trigger`）与主题选项完全依赖鼠标 `:hover`/`:focus-within` 展开，纯键盘用户仍无法聚焦并展开该子菜单选择主题。
 
@@ -180,7 +181,8 @@ origin: migrated from legacy ledger ("## DW-30"), 2026-08-02
 location: `src/components/MenuBar.vue` 中 `.submenu-trigger` 及其兄弟顶层菜单项均未设置 `tabindex`，也没有 `keydown` 处理逻辑，Tab 键无法到达 Theme 子菜单或其内部的主题按钮。
 severity: low
 reason: Theme 子菜单触发器（`.submenu-trigger`）与主题选项完全依赖鼠标 `:hover`/`:focus-within` 展开，纯键盘用户仍无法聚焦并展开该子菜单选择主题。
-status: open
+status: done 2026-08-02
+resolution: resolved by sweep bundle dw-menu-keyboard-accessibility
 
 ### DW-39: 主题切换复用了全局 `saveStatus`/`saveMessage` 通道用于反馈，可能覆盖并掩盖真实的文档保存成功/失败提示。
 
@@ -448,3 +450,11 @@ location: `e2e/story-9-1.spec.ts` 与 `e2e/utils/tauri-mock.ts` 中所有 `set_c
 severity: low
 reason: `story-9-1.spec.ts` 完全 mock 了后端 Tauri 命令，对 Confluence 相关 Rust 逻辑（keyring 读写、请求体拼接、各类失败分支的错误码）缺乏真实的回归测试覆盖。
 status: open
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-dw-37-38-menu-keyboard-accessibility.md`
+  summary: `MenuBar.vue` 中 `.menu-item`/`.submenu-trigger` 已有 `aria-haspopup="true"`，但均缺少 `aria-expanded` 状态绑定，屏幕阅读器无法感知这些弹出菜单当前是展开还是收起。
+  evidence: 审查 DW-37/DW-38 键盘可达性修复的 diff 时确认该缺口在改动前后均存在（`aria-haspopup` 早已存在于原始代码），本次改动只新增了 tabindex/keydown 使元素可达，并未引入或修复 `aria-expanded` 状态，属于本次改动之外的既有无障碍语义缺口。
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-dw-37-38-menu-keyboard-accessibility.md`
+  summary: `MenuBar.vue` 中 `.menu-dropdown`（顶层菜单容器）从未声明 `role="menu"`，而其内部 `.menu-row` 子项却使用 `role="menuitem"`，与 `.submenu-dropdown`（已正确声明 `role="menu"`）不一致，构成无障碍角色树的结构性不一致。
+  evidence: 对比 `.submenu-dropdown` 已有 `role="menu"` 而 `.menu-dropdown` 从未添加该属性（本次改动未涉及该属性），说明这是既有实现遗留的不一致，非本次 DW-37/DW-38 修复引入。
