@@ -154,7 +154,8 @@ origin: migrated from legacy ledger ("## DW-27"), 2026-08-02
 location: `themes.ts` 现已对运行时字段做基本校验，但没有机制校验 `themes.json` 的每个 `id` 都存在对应的 `[data-theme="id"]` CSS 规则，反之亦然。
 severity: low
 reason: 主题标识分别维护在 `src/styles/app.css` 的 CSS 选择器与 `src/lib/themes.json` 两处，缺少构建期校验确保两者一一对应，未来新增/重命名主题时容易出现拼写不一致导致主题静默失效。
-status: open
+status: done 2026-08-02
+resolution: resolved by sweep bundle dw-theme-id-sync-guard
 
 ### DW-36: `set_config` 的读-改-写模式没有加锁，近乎同时的两次调用（例如切换主题与更改保存路径）可能互相覆盖对方写入的字段。
 
@@ -194,7 +195,8 @@ origin: migrated from legacy ledger ("## DW-32"), 2026-08-02
 location: `src-tauri/src/config.rs` 新增的 `VALID_THEME_IDS` 常量数组与 `DEFAULT_THEME_ID` 字面量需要手工与 `src/lib/themes.json` 的 10 个主题 id 及 `defaultThemeId` 保持同步，未来新增/重命名主题时容易遗漏一侧导致后端拒绝合法主题或默认值不一致。
 severity: low
 reason: 主题 ID 与默认主题 ID 分别在 `src/lib/themes.ts`/`themes.json`（前端）与 `src-tauri/src/config.rs`（后端 `VALID_THEME_IDS`/`DEFAULT_THEME_ID`）两处独立维护，缺少构建期或运行期校验保证一致。
-status: open
+status: done 2026-08-02
+resolution: resolved by sweep bundle dw-theme-id-sync-guard
 
 ### DW-41: `main.ts` 的 `bootstrap()` 与 `App.vue` 的 `onMounted()` 在启动时各自独立调用一次 `get_config`，造成重复 IPC/磁盘读取。
 
