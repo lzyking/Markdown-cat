@@ -26,10 +26,29 @@ const emit = defineEmits<{
 const containerRef = ref<HTMLElement | null>(null)
 let view: EditorView | null = null
 let isApplyingExternalUpdate = false
+let positionTokenSeq = 0
+// 跟踪的是粘贴发生瞬间的完整选区范围（from/to）与是否为折叠光标点位，
+// 这样"粘贴图片时选中了一段文本"仍能像原生粘贴一样替换该选区；而折叠光标（无选区）
+// 情形下用相同的映射偏向（bias）跟踪单点，避免同一位置发生的原生文本粘贴把单点
+// "撑开"成一段范围，导致图片引用错误地替换掉刚插入的文本而非跟在其后。
+const trackedPastePositions = new Map<number, { from: number; to: number; collapsed: boolean }>()
 
-function insertText(text: string, cursorOffset?: number, replaceSlashPrefix = false) {
+function releasePositionToken(token?: number) {
+  if (token === undefined) {
+    return
+  }
+
+  trackedPastePositions.delete(token)
+}
+
+function insertText(text: string, cursorOffset?: number, replaceSlashPrefix = false, positionToken?: number) {
   if (!view) return
-  const { from, to } = view.state.selection.main
+  const trackedPosition = positionToken === undefined ? undefined : trackedPastePositions.get(positionToken)
+  if (positionToken !== undefined && trackedPosition !== undefined) {
+    trackedPastePositions.delete(positionToken)
+  }
+
+  const { from, to } = trackedPosition ?? view.state.selection.main
   
   let start = from
   if (replaceSlashPrefix && start > 0 && view.state.doc.sliceString(start - 1, start) === '/') {
@@ -65,11 +84,37 @@ function insertTemplate(template: string, cursorOffset?: number) {
   insertText(template, cursorOffset, true)
 }
 
+function hasOtherPasteableClipboardContent(clipboardData: DataTransfer): boolean {
+  const clipboardTypes = Array.from(clipboardData.types ?? [])
+  const hasTextItem = clipboardTypes.includes('text/plain') && clipboardData.getData('text/plain').length > 0
+  const hasHtmlItem = clipboardTypes.includes('text/html') && clipboardData.getData('text/html').length > 0
+  return hasTextItem || hasHtmlItem
+}
+
 async function emitClipboardImage(event: ClipboardEvent): Promise<void> {
   const clipboardData = event.clipboardData
-  if (!clipboardData) {
+  if (!clipboardData || !view) {
     return
   }
+
+  // 混合内容放行时，原生粘贴会用剪贴板文本/HTML 替换当前选区（一次 delete+insert
+  // 变更，替换范围恰好等于原选区 from/to）。选区两端作为该变更的边界点，无论
+  // mapPos 的 bias 取值都会分别映射到"替换前"（from）与"替换后"（to），因此继续
+  // 追踪原始 {from, to} 会把原生刚插入的内容整体当作待替换范围，导致图片引用错误
+  // 地吞掉它。此时应只追踪选区的 `to` 端点并当作折叠光标处理，让它随原生插入内容
+  // 一起前移到其后，图片再跟在后面插入而不覆盖任何内容。仅当图片是剪贴板中唯一可
+  // 粘贴内容（原生粘贴被 preventDefault，不会发生该替换）时，才保留原始选区范围，
+  // 让图片按原有行为替换用户当时选中的文本。
+  const nativeAlsoHandlesPaste = hasOtherPasteableClipboardContent(clipboardData)
+  const positionToken = ++positionTokenSeq
+  const selectionAtPaste = view.state.selection.main
+  trackedPastePositions.set(positionToken, nativeAlsoHandlesPaste
+    ? { from: selectionAtPaste.to, to: selectionAtPaste.to, collapsed: true }
+    : {
+      from: selectionAtPaste.from,
+      to: selectionAtPaste.to,
+      collapsed: selectionAtPaste.from === selectionAtPaste.to,
+    })
 
   const items = Array.from(clipboardData.items ?? [])
   const matchedItem = items.find((item) => item.kind === 'file' && isSupportedClipboardImageType(item.type))
@@ -77,26 +122,41 @@ async function emitClipboardImage(event: ClipboardEvent): Promise<void> {
     ?? Array.from(clipboardData.files ?? []).find((file) => isSupportedClipboardImageType(file.type))
 
   if (!matchedFile || !isSupportedClipboardImageType(matchedFile.type)) {
+    trackedPastePositions.delete(positionToken)
     return
   }
 
-  let buffer: ArrayBuffer
-  try {
-    buffer = await matchedFile.arrayBuffer()
-  } catch {
+  const dataUrl = await new Promise<string | null>((resolve) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : null)
+    reader.onerror = () => resolve(null)
+    reader.onabort = () => resolve(null)
+    reader.readAsDataURL(matchedFile)
+  })
+
+  if (!dataUrl) {
+    trackedPastePositions.delete(positionToken)
     // Reading the clipboard file failed (e.g. corrupted/unreadable blob) — abort silently.
+    return
+  }
+
+  const commaIndex = dataUrl.indexOf(',')
+  if (commaIndex < 0) {
+    trackedPastePositions.delete(positionToken)
     return
   }
 
   emit('imagePaste', {
     mimeType: matchedFile.type,
-    bytes: Array.from(new Uint8Array(buffer)),
+    bytes: dataUrl.slice(commaIndex + 1),
+    positionToken,
   })
 }
 
 defineExpose({
   insertTemplate,
   insertText,
+  releasePositionToken,
 })
 
 function createState(doc: string): EditorState {
@@ -139,13 +199,33 @@ function createState(doc: string): EditorState {
             return false
           }
 
-          event.preventDefault()
+          const hasOtherPasteableContent = hasOtherPasteableClipboardContent(clipboardData)
+          // 仅供 E2E 断言本处理器是否命中过 preventDefault 分支。
+          const containerEl = containerRef.value as ((HTMLElement & { __lastImagePastePreventedDefault?: boolean }) | null)
+          if (containerEl) {
+            containerEl.__lastImagePastePreventedDefault = !hasOtherPasteableContent
+          }
+
+          if (!hasOtherPasteableContent) {
+            event.preventDefault()
+          }
           void emitClipboardImage(event)
-          return true
+          return !hasOtherPasteableContent
         },
       }),
       EditorView.updateListener.of((update) => {
         if (update.docChanged) {
+          for (const [token, range] of trackedPastePositions) {
+            // 折叠光标（无选区）用相同 bias 映射两端，保持其始终是单点，跟随插入内容
+            // 前移（等同用户在该处继续输入时光标的自然行为）；有选区时用 -1/+1，使
+            // 选区边界处发生的插入被视为"落在选区内"，选区随之正确扩展/收缩。
+            const bias = range.collapsed ? 1 : -1
+            trackedPastePositions.set(token, {
+              from: update.changes.mapPos(range.from, bias),
+              to: update.changes.mapPos(range.to, 1),
+              collapsed: range.collapsed,
+            })
+          }
           emit('update:modelValue', update.state.doc.toString())
         }
         if (update.selectionSet && !isApplyingExternalUpdate) {
@@ -183,6 +263,7 @@ onUnmounted(() => {
     if (containerEl) {
       delete containerEl.__codemirrorView
       delete containerEl.__codemirrorCommands
+      delete containerEl.__lastImagePastePreventedDefault
     }
     view.destroy()
     view = null
@@ -196,6 +277,7 @@ watch(
     const current = view.state.doc.toString()
     if (next === current) return
 
+    trackedPastePositions.clear()
     isApplyingExternalUpdate = true
     const change = computeMinimalLineChange(current, next ?? '', (offset) => view!.state.doc.lineAt(offset))
     view.dispatch({

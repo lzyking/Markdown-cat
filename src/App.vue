@@ -860,6 +860,7 @@ async function handleClipboardImagePaste(payload: ClipboardImagePayload) {
     })
 
     if (!saveRes.ok || !saveRes.data) {
+      sourceEditorRef.value?.releasePositionToken(payload.positionToken)
       saveStatus.value = 'failure'
       saveMessage.value = formatSaveError(saveRes.error)
       return
@@ -871,12 +872,13 @@ async function handleClipboardImagePaste(payload: ClipboardImagePayload) {
     const actualFilename = saveRes.data.filename
     const relativeAssetPath = savedDocumentDir ? `./${actualFilename}` : `./assets/${actualFilename}`
 
-    sourceEditorRef.value?.insertText(`![Image](${relativeAssetPath})`)
+    sourceEditorRef.value?.insertText(`![Image](${relativeAssetPath})`, undefined, false, payload.positionToken)
     saveStatus.value = 'success'
     saveMessage.value = savedDocumentDir
       ? `图片已保存至 ${actualFilename}`
       : `图片已暂存至 assets/${actualFilename}`
   } catch (err: any) {
+    sourceEditorRef.value?.releasePositionToken(payload.positionToken)
     saveStatus.value = 'failure'
     saveMessage.value = formatSaveError(err?.message)
   }

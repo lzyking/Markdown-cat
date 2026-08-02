@@ -267,7 +267,8 @@ origin: migrated from legacy ledger ("## DW-39"), 2026-08-02
 location: `src/components/SourceEditor.vue` 的 `paste` 处理器只要检测到 `clipboardData` 中存在受支持类型的图片项，即调用 `event.preventDefault()` 并只处理图片，不会保留同一次粘贴中可能存在的富文本/纯文本内容。
 severity: low
 reason: 剪贴板粘贴图片会无条件调用 `event.preventDefault()`，若剪贴板中同时含有图片以外的文本/HTML 内容，会被一并丢弃而非按原生行为一起粘贴。
-status: open
+status: done 2026-08-02
+resolution: resolved by sweep bundle dw-clipboard-paste-editor-robustness
 
 ### DW-48: `save_image_asset` 后端命令未校验写入的字节内容确实是合法的 PNG/JPEG 图片，理论上可被用于写入任意二进制内容到受信目录中的任意合法文件名。
 
@@ -283,7 +284,8 @@ origin: migrated from legacy ledger ("## DW-41"), 2026-08-02
 location: `src/components/SourceEditor.vue` 的 `emitClipboardImage` 使用 `Array.from(new Uint8Array(buffer))` 生成 `number[]` 作为 `ClipboardImagePayload.bytes`，未评估改用更高效的二进制传输方式（如 base64 或 Tauri 的 raw bytes 支持）对大图片粘贴性能的影响。
 severity: low
 reason: 前端将粘贴的图片二进制经 `ArrayBuffer` → `Uint8Array` → 普通 `number[]` 三次转换后再通过 IPC 传给后端，大尺寸截图会带来不必要的内存开销与潜在 UI 卡顿。
-status: open
+status: done 2026-08-02
+resolution: resolved by sweep bundle dw-clipboard-paste-editor-robustness
 
 ### DW-50: 通过“上次打开文件”自动恢复会话时，`App.vue` 的 `onMounted` 只恢复了 `filename`/`content`，未同步设置 `currentFilePath`，导致自动恢复后的文档被当作“未保存”处理。
 
@@ -334,7 +336,8 @@ origin: migrated from legacy ledger ("## DW-47"), 2026-08-02
 location: `src/components/SourceEditor.vue` 的 `emitClipboardImage`/`insertText` 只在 `invoke('save_image_asset', ...)` resolve 之后调用 `view.state.selection.main` 取当前选区作为插入位置，未在粘贴发生的瞬间捕获选区、也未通过编辑器的变更描述（change mapping）把该位置映射穿过写盘期间发生的中间编辑；修复需要引入位置映射逻辑，非本轮可安全自动完成的最小改动，故记录以待后续统一处理。
 severity: low
 reason: 剪贴板粘贴图片写盘为异步操作，`SourceEditor.insertText` 在后端保存返回后才读取当前选区来定位插入点，若用户在写盘期间继续输入会导致图片 Markdown 链接插入到错误的光标位置。
-status: open
+status: done 2026-08-02
+resolution: resolved by sweep bundle dw-clipboard-paste-editor-robustness
 
 ### DW-13: Follow-up review still recommended for 7-2-clipboard-image-paste-and-local-storage after the damping cap was spent
 origin: review-budget-followup
@@ -499,3 +502,19 @@ resolution: resolved by sweep bundle dw-menu-aria-semantics
 - source_spec: `_bmad-output/implementation-artifacts/spec-dw-67-68-menu-aria-semantics.md`
   summary: The two `.menu-dropdown` containers (and the pre-existing `.submenu-dropdown`) now all declare `role="menu"` but none has an `aria-label`/`aria-labelledby` tying it back to its trigger text ("Markdown Cat" / "文件" / "Theme"), so a screen reader announces "menu" with no distinguishing name when moving between them.
   evidence: Confirmed via `grep -n 'role="menu"' src/components/MenuBar.vue` — none of the three `role="menu"` elements has an accompanying `aria-label`/`aria-labelledby`; `.submenu-dropdown` already lacked this before the DW-67/68 fix, and DW-67/68's scope was explicitly limited to `aria-expanded` and `role="menu"` parity only.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-dw-47-49-55-clipboard-paste-editor-robustness.md`
+  summary: `handleClipboardImagePaste` in `App.vue` resolves the pending `save_image_asset` invocation and calls `sourceEditorRef.value?.insertText(...)` against whatever document is currently open, so if the user switches to a different file before the async save completes, the image markdown reference is inserted into the wrong (newly opened) document instead of the one the paste originated from.
+  evidence: `App.vue`'s `handleClipboardImagePaste` reads `sourceEditorRef.value` at resolve time with no document/session identity check; this asynchronous save-then-insert race predates this story (the save was already async before DW-47/49/55), and this story's changes (mixed-content dual paste, base64 transfer, position-token mapping) do not touch document-switch handling, so the gap is pre-existing and only surfaced incidentally while reviewing the position-mapping logic.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-dw-47-49-55-clipboard-paste-editor-robustness.md`
+  summary: `positionTokenSeq`/`trackedPastePositions` in `SourceEditor.vue` are scoped per component instance with no namespacing by document or editor-instance identity, so if the editor is unmounted and remounted (or the document context otherwise resets) while a paste's async `save_image_asset` call is still pending, the stale token number could coincide with a freshly issued token in the new instance and cause the pending insert to target an unrelated position.
+  evidence: `positionTokenSeq` is a plain incrementing `let` reset to `0` on every `emitClipboardImage`/component setup call and never invalidated on unmount beyond the `trackedPastePositions.clear()` triggered by external content replacement in the `watch` callback; this is a new mechanism introduced by this story (position-token tracking for DW-55) and is a plausible but narrow lifecycle edge case, not exercised by any current test.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-dw-47-49-55-clipboard-paste-editor-robustness.md`
+  summary: `handleClipboardImagePaste`'s success branch in `App.vue` sets `saveStatus.value = 'success'` and a success message unconditionally after `sourceEditorRef.value?.insertText(...)`, without checking whether `sourceEditorRef.value` was actually available/truthy, so if the editor ref is unavailable at resolve time the file is still written to disk but no Markdown reference is inserted while the UI still reports success.
+  evidence: The `insertText` call uses optional chaining (`sourceEditorRef.value?.insertText(...)`) with no resulting boolean/return value checked before setting `saveStatus.value = 'success'`; this optional-chaining-without-verification pattern predates this story (present in the original `insertText()` call before the position-token parameter was added) and is not a new regression introduced by DW-47/49/55, only surfaced incidentally during this review.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-dw-47-49-55-clipboard-paste-editor-robustness.md`
+  summary: `handleClipboardImagePaste` in `App.vue` resolves the pending `save_image_asset` invocation and calls `sourceEditorRef.value?.insertText(...)` against whatever document is currently open, so if the user switches to a different file before the async save completes, the image markdown reference is inserted into the wrong (newly opened) document instead of the one the paste originated from.
+  evidence: `App.vue`'s `handleClipboardImagePaste` reads `sourceEditorRef.value` at resolve time with no document/session identity check; this asynchronous save-then-insert race predates this story (the save was already async before DW-47/49/55), and this story's changes (mixed-content dual paste, base64 transfer, position-token mapping) do not touch document-switch handling. Independently re-surfaced by this review pass's reviewers (previously deferred in the prior "Follow-up review pass" of this same spec); re-recorded here per this workflow's append-only, no-dedup ledger policy.

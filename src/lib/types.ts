@@ -76,7 +76,8 @@ export interface SaveResult {
 
 export interface ClipboardImagePayload {
   mimeType: 'image/png' | 'image/jpeg'
-  bytes: number[]
+  bytes: string
+  positionToken?: number
 }
 
 export interface ReadImageAssetResult {

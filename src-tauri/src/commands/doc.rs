@@ -337,14 +337,28 @@ fn save_image_asset_impl<R: tauri::Runtime>(
     }
 }
 
+fn save_image_asset_base64_impl<R: tauri::Runtime>(
+    manager: &impl tauri::Manager<R>,
+    target_dir: &str,
+    filename: &str,
+    bytes_base64: &str,
+) -> CmdResult<ImageSaveResult> {
+    let bytes = match base64::engine::general_purpose::STANDARD.decode(bytes_base64) {
+        Ok(bytes) => bytes,
+        Err(_) => return CmdResult::failure("ERR_INVALID_IMAGE_DATA".to_string()),
+    };
+
+    save_image_asset_impl(manager, target_dir, filename, &bytes)
+}
+
 #[tauri::command]
 pub fn save_image_asset(
     app_handle: tauri::AppHandle,
     target_dir: String,
     filename: String,
-    bytes: Vec<u8>,
+    bytes: String,
 ) -> CmdResult<ImageSaveResult> {
-    save_image_asset_impl(&app_handle, &target_dir, &filename, &bytes)
+    save_image_asset_base64_impl(&app_handle, &target_dir, &filename, &bytes)
 }
 
 /// 将暂存资源文件从旧目录迁移到新目录（用于文档“另存为”后同步图片位置）。
@@ -386,7 +400,7 @@ pub fn copy_asset_file(
 
 #[cfg(test)]
 mod tests {
-    use super::{copy_asset_file_impl, save_image_asset_impl};
+    use super::{copy_asset_file_impl, save_image_asset_base64_impl, save_image_asset_impl};
     use crate::doc;
     use std::fs;
     use tauri::Manager;
@@ -443,6 +457,46 @@ mod tests {
             fs::read(asset_dir.join(&second_data.filename)).unwrap(),
             vec![3, 4]
         );
+    }
+
+    #[test]
+    fn save_image_asset_decodes_valid_base64_and_writes_file() {
+        let app = tauri::test::mock_app();
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let asset_dir = temp_dir.path().join("images");
+
+        let result = save_image_asset_base64_impl(
+            &app,
+            &asset_dir.to_string_lossy(),
+            "paste.png",
+            "iVBORw==",
+        );
+
+        assert!(result.ok);
+        let data = result.data.expect("save result data");
+        assert_eq!(data.filename, "paste.png");
+        assert_eq!(
+            fs::read(asset_dir.join("paste.png")).unwrap(),
+            vec![0x89, 0x50, 0x4e, 0x47]
+        );
+    }
+
+    #[test]
+    fn save_image_asset_rejects_invalid_base64_without_writing_file() {
+        let app = tauri::test::mock_app();
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let asset_dir = temp_dir.path().join("images");
+
+        let result = save_image_asset_base64_impl(
+            &app,
+            &asset_dir.to_string_lossy(),
+            "paste.png",
+            "%%%not-base64%%%",
+        );
+
+        assert!(!result.ok);
+        assert_eq!(result.error, Some("ERR_INVALID_IMAGE_DATA".to_string()));
+        assert!(!asset_dir.exists());
     }
 
     #[test]
