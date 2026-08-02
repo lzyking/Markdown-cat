@@ -235,7 +235,8 @@ origin: migrated from legacy ledger ("## DW-36"), 2026-08-02
 location: `src/lib/markdown.ts` 的 `TaskAwareRenderer.checkbox()` 仅输出裸 `<input type="checkbox">`，未关联同一 `<li>` 内的文本作为可点击标签，也未设置 `aria-label`；不影响本故事 AC 的达成，但存在可访问性提升空间。
 severity: low
 reason: 预览区渲染出的任务列表 checkbox 缺少可访问的 label/name，只有小方框本身可点击，点击任务文字本身无效果。
-status: open
+status: done 2026-08-02
+resolution: resolved by sweep bundle dw-task-checkbox-accessibility
 
 ### DW-45: 预览区新增的可交互 checkbox 会加入原生 Tab 焦点顺序，使原本作为被动展示区域的预览面板新增多个可聚焦停靠点，可能影响整体键盘导航体验。
 
@@ -243,7 +244,8 @@ origin: migrated from legacy ledger ("## DW-37"), 2026-08-02
 location: `src/components/PreviewPane.vue` 渲染的 `<input type="checkbox">` 未设置 `tabindex="-1"` 或其他方式移出默认 Tab 顺序，长文档中含多个任务项时会显著增加预览区的 Tab 停靠次数。
 severity: low
 reason: 预览区新增的可交互 checkbox 会加入原生 Tab 焦点顺序，使原本作为被动展示区域的预览面板新增多个可聚焦停靠点，可能影响整体键盘导航体验。
-status: open
+status: done 2026-08-02
+resolution: resolved by sweep bundle dw-task-checkbox-accessibility
 
 ### DW-46: 预览区任务 checkbox 点击后通过 `content.value` 整体重写驱动 `SourceEditor`，触发编辑器 `from:0 to:doc.length` 的全量替换事务，而非仅针对被切换那一行的局部编辑事务。
 

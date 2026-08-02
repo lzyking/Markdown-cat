@@ -17,6 +17,10 @@ function escapeHtml(raw: string): string {
  */
 const DANGEROUS_HTML_PATTERN = /<script|<iframe|<object|<embed|on\w+\s*=|javascript:/i
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
 /**
  * 递归遍历 token 树，过滤危险脚本标签，允许安全的 HTML 文本与颜色标签（如 <font color="...">, <span style="...">）。
  */
@@ -69,6 +73,7 @@ function createRenderNonce(): string {
  */
 class TaskAwareRenderer extends Renderer {
   private taskIndex = 0
+  private pendingCheckboxIds: string[] = []
 
   constructor(private readonly nonce: string) {
     super()
@@ -76,7 +81,37 @@ class TaskAwareRenderer extends Renderer {
 
   checkbox(checked: boolean): string {
     const index = this.taskIndex++
-    return `<input type="checkbox" data-task-nonce="${this.nonce}" data-task-index="${index}"${checked ? ' checked' : ''}>`
+    const id = `task-checkbox-${this.nonce}-${index}`
+    this.pendingCheckboxIds.push(id)
+    return `<input type="checkbox" id="${id}" data-task-nonce="${this.nonce}" data-task-index="${index}"${checked ? ' checked' : ''}>`
+  }
+
+  listitem(text: string, task: boolean, checked: boolean): string {
+    if (!task) {
+      return super.listitem(text, task, checked)
+    }
+
+    const checkboxId = this.pendingCheckboxIds.pop()
+    if (!checkboxId) {
+      return super.listitem(text, task, checked)
+    }
+
+    const escapedId = escapeRegExp(checkboxId)
+    const checkboxPattern = new RegExp(`<input\\b[^>]*\\bid="${escapedId}"[^>]*>\\s?`)
+    const plainTextLabel = text
+      .replace(checkboxPattern, '')
+      // 图片没有文本节点，其可访问名称完全来自 alt 属性；在通用标签剥离之前
+      // 先把 <img alt="..."> 替换为其 alt 文本，避免仅含图片的任务项得到空白 aria-label。
+      .replace(/<img\b[^>]*\balt="([^"]*)"[^>]*>/gi, ' $1 ')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .replace(/"/g, '&quot;')
+
+    const inputPattern = new RegExp(`(<input\\b[^>]*\\bid="${escapedId}")([^>]*>)`)
+    const labeledText = text.replace(inputPattern, `$1 aria-label="${plainTextLabel}"$2`)
+
+    return super.listitem(labeledText, task, checked)
   }
 }
 

@@ -22,6 +22,13 @@ export function decoratePreviewHtml(
   rawHtml: string,
   options: {
     transformImageSrc?: (src: string) => string | null
+    /**
+     * 仅供"被动展示"的实时预览面板（PreviewPane.vue）设置为 true：
+     * 将任务 checkbox 移出原生 Tab 顺序（DW-45）。
+     * 导出为独立 HTML 文档（export-html.ts）时不应传入此项——
+     * 导出文档中的 checkbox 是页面主要内容，仍需保留默认 Tab 可达性。
+     */
+    disableCheckboxTabbing?: boolean
   } = {},
 ): string {
   if (!rawHtml) {
@@ -58,6 +65,12 @@ export function decoratePreviewHtml(
       if (transformedSource) {
         image.setAttribute('src', transformedSource)
       }
+    })
+  }
+
+  if (options.disableCheckboxTabbing) {
+    root.querySelectorAll('input[type="checkbox"][data-task-nonce]').forEach((checkbox) => {
+      checkbox.setAttribute('tabindex', '-1')
     })
   }
 

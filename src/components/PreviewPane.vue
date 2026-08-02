@@ -32,6 +32,8 @@ function renderPreviewHtml(rawHtml: string): string {
       const absolutePath = resolveRelativeAssetPath(props.documentBaseDir, source)
       return convertFileSrc(absolutePath)
     },
+    // 本组件是被动展示的实时预览面板，任务 checkbox 不应加入原生 Tab 顺序（DW-45）。
+    disableCheckboxTabbing: true,
   })
 }
 
