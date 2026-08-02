@@ -114,7 +114,8 @@ origin: migrated from legacy ledger ("## DW-22"), 2026-08-02
 location: `e2e/story-5-2.spec.ts` 的 `dragSplitterTo` 调用与 `data-preview-layout` 初始值断言直接耦合当前 1100x700 视口下的默认 50/50 分栏与 420/640px 断点常量。
 severity: low
 reason: e2e story-5-2 测试用例假设默认分栏比例与固定像素拖拽目标（如 860/880/900px）能产生 regular/compact/wide 断点，未来若默认分栏比例或断点阈值调整，测试会脆弱失败。
-status: open
+status: done 2026-08-02
+resolution: resolved by sweep bundle dw-preview-breakpoint-test-hardening
 
 ### DW-31: PreviewPane 响应式断点下的字号（13px/13.5px/14px）以硬编码 CSS 变量覆盖形式实现，未接入项目既有的设计 token 体系。
 

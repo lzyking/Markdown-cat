@@ -1,5 +1,8 @@
 export type PreviewLayout = 'compact' | 'regular' | 'wide'
 
+export const PREVIEW_COMPACT_MAX_WIDTH = 420
+export const PREVIEW_REGULAR_MAX_WIDTH = 640
+
 const PREVIEW_LAYOUT_STYLES: Record<PreviewLayout, Record<string, string>> = {
   compact: {
     '--preview-body-font-size': '13px',
@@ -78,11 +81,11 @@ export function decoratePreviewHtml(
 }
 
 export function resolveResponsiveLayout(width: number): PreviewLayout {
-  if (width <= 420) {
+  if (width <= PREVIEW_COMPACT_MAX_WIDTH) {
     return 'compact'
   }
 
-  if (width <= 640) {
+  if (width <= PREVIEW_REGULAR_MAX_WIDTH) {
     return 'regular'
   }
 
