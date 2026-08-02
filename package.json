@@ -5,8 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "node scripts/check-theme-sync.mjs && vue-tsc --noEmit && vite build",
+    "build": "node scripts/check-theme-sync.mjs && node scripts/check-theme-contrast.mjs && vue-tsc --noEmit && vite build",
     "check:theme-sync": "node scripts/check-theme-sync.mjs",
+    "check:theme-contrast": "node scripts/check-theme-contrast.mjs",
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",

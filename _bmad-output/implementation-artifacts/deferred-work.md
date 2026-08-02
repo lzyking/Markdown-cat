@@ -146,7 +146,8 @@ origin: migrated from legacy ledger ("## DW-26"), 2026-08-02
 location: 本轮 review 人工发现 5 个浅色主题强调色对比度低于 WCAG AA（已修复），但当前无任何测试用例覆盖对比度或视觉快照，回归依赖人工审查。
 severity: low
 reason: 新增的 10 套主题色板缺少自动化对比度/视觉回归测试，后续调色或新增主题时容易再次引入低对比度问题。
-status: open
+status: done 2026-08-02
+resolution: resolved by sweep bundle dw-theme-contrast-regression-tests
 
 ### DW-35: 主题标识分别维护在 `src/styles/app.css` 的 CSS 选择器与 `src/lib/themes.json` 两处，缺少构建期校验确保两者一一对应，未来新增/重命名主题时容易出现拼写不一致导致主题静默失效。
 
