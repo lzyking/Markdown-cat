@@ -96,7 +96,8 @@ origin: migrated from legacy ledger ("## DW-11"), 2026-08-02
 location: src/App.vue
 severity: medium
 reason: 当前 splitter 仅通过鼠标事件 `@mousedown`/`window.mousemove`/`window.mouseup` 实现拖拽，桌面端 MVP 满足 AC。后续若支持触屏设备或无障碍键盘操作，需补充 `@touchstart`/`@touchmove`/`@touchend` 及键盘 ArrowLeft/ArrowRight/Home/End 处理。
-status: open
+status: done 2026-08-02
+resolution: resolved by sweep bundle dw-splitter-keyboard-touch-and-aria
 
 ### DW-29: Story 5.1 Splitter 缺少 ARIA 值语义
 
@@ -104,7 +105,8 @@ origin: migrated from legacy ledger ("## DW-12"), 2026-08-02
 location: src/App.vue:410-417
 severity: medium
 reason: splitter 已设置 `role="separator"` 与 `aria-label`，但缺少 `aria-valuenow`/`aria-valuemin`/`aria-valuemax`，屏幕阅读器无法感知当前分栏比例。建议在补充键盘支持时一并添加。
-status: open
+status: done 2026-08-02
+resolution: resolved by sweep bundle dw-splitter-keyboard-touch-and-aria
 
 ### DW-30: e2e story-5-2 测试用例假设默认分栏比例与固定像素拖拽目标（如 860/880/900px）能产生 regular/compact/wide 断点，未来若默认分栏比例或断点阈值调整，测试会脆弱失败。
 

@@ -54,6 +54,7 @@ let isManuallyResized = false
 let rafId: number | null = null
 let pendingWidth = 0
 let dragContainerRect: DOMRect | null = null
+let activeTouchId: number | null = null
 
 // 斜杠快捷插入菜单状态
 const isSlashMenuOpen = ref(false)
@@ -114,6 +115,11 @@ const exportCancelable = ref(true)
 const statusBarStatus = computed(() =>
   saveStatus.value === 'unsaved' ? 'normal' : saveStatus.value
 )
+const splitterAriaValueNow = computed(() => {
+  const containerWidth = containerRef.value?.getBoundingClientRect().width
+  if (!containerWidth) return 50
+  return Math.round((leftWidth.value / containerWidth) * 100)
+})
 const exportProgressPercent = computed(() => {
   if (!exportProgress.value.active) return 0
   if (exportProgress.value.total === 0) return 100
@@ -963,6 +969,21 @@ function scheduleWidthUpdate(width: number) {
   }
 }
 
+function removeTouchListeners() {
+  window.removeEventListener('touchmove', onWindowTouchMove)
+  window.removeEventListener('touchend', onWindowTouchEnd)
+  window.removeEventListener('touchcancel', onWindowTouchEnd)
+}
+
+function finalizeDragging() {
+  if (rafId !== null) {
+    cancelAnimationFrame(rafId)
+    leftWidth.value = pendingWidth
+    rafId = null
+  }
+  stopDragging()
+}
+
 function stopDragging() {
   isDragging = false
   dragContainerRect = null
@@ -973,6 +994,7 @@ function stopDragging() {
   document.body.style.userSelect = ''
   window.removeEventListener('mousemove', onWindowMouseMove)
   window.removeEventListener('mouseup', onWindowMouseUp)
+  removeTouchListeners()
 }
 
 function onWindowMouseMove(e: MouseEvent) {
@@ -983,12 +1005,25 @@ function onWindowMouseMove(e: MouseEvent) {
 }
 
 function onWindowMouseUp() {
-  if (rafId !== null) {
-    cancelAnimationFrame(rafId)
-    leftWidth.value = pendingWidth
-    rafId = null
+  finalizeDragging()
+}
+
+function onWindowTouchMove(e: TouchEvent) {
+  if (!isDragging || !dragContainerRect || activeTouchId === null) return
+  const touch = Array.from(e.touches).find((t) => t.identifier === activeTouchId)
+  if (!touch) return
+  e.preventDefault()
+  const rawWidth = touch.clientX - dragContainerRect.left
+  const clamped = clampLeftWidth(rawWidth, dragContainerRect.width)
+  scheduleWidthUpdate(clamped)
+}
+
+function onWindowTouchEnd(e: TouchEvent) {
+  if (activeTouchId !== null && !Array.from(e.changedTouches).some((t) => t.identifier === activeTouchId)) {
+    return
   }
-  stopDragging()
+  activeTouchId = null
+  finalizeDragging()
 }
 
 function onSplitterMouseDown(e: MouseEvent) {
@@ -1002,6 +1037,53 @@ function onSplitterMouseDown(e: MouseEvent) {
   scheduleWidthUpdate(pendingWidth)
   window.addEventListener('mousemove', onWindowMouseMove)
   window.addEventListener('mouseup', onWindowMouseUp)
+}
+
+function onSplitterTouchStart(e: TouchEvent) {
+  if (e.touches.length !== 1) return
+  const touch = e.touches[0]
+  if (!touch || !containerRef.value) return
+  e.preventDefault()
+  activeTouchId = touch.identifier
+  isDragging = true
+  isManuallyResized = true
+  document.body.style.userSelect = 'none'
+  dragContainerRect = containerRef.value.getBoundingClientRect()
+  pendingWidth = clampLeftWidth(touch.clientX - dragContainerRect.left, dragContainerRect.width)
+  scheduleWidthUpdate(pendingWidth)
+  window.addEventListener('touchmove', onWindowTouchMove, { passive: false })
+  window.addEventListener('touchend', onWindowTouchEnd)
+  window.addEventListener('touchcancel', onWindowTouchEnd)
+}
+
+function onSplitterKeyDown(e: KeyboardEvent) {
+  if (isDragging) return
+  const containerWidth = containerRef.value?.getBoundingClientRect().width
+  if (!containerWidth) return
+
+  const step = Math.max(1, containerWidth * 0.02)
+  let nextWidth: number | null = null
+
+  switch (e.key) {
+    case 'ArrowLeft':
+      nextWidth = leftWidth.value - step
+      break
+    case 'ArrowRight':
+      nextWidth = leftWidth.value + step
+      break
+    case 'Home':
+      nextWidth = 200
+      break
+    case 'End':
+      nextWidth = containerWidth - 200
+      break
+    default:
+      return
+  }
+
+  e.preventDefault()
+  isManuallyResized = true
+  leftWidth.value = clampLeftWidth(nextWidth, containerWidth)
 }
 
 function resetWidths() {
@@ -1089,6 +1171,7 @@ onUnmounted(() => {
   }
   window.removeEventListener('mousemove', onWindowMouseMove)
   window.removeEventListener('mouseup', onWindowMouseUp)
+  removeTouchListeners()
   document.body.style.userSelect = ''
 })
 
@@ -1155,7 +1238,14 @@ if ((window as any).__TAURI_MOCK__) {
         class="editor-splitter"
         role="separator"
         aria-label="调整编辑栏与预览栏宽度"
+        aria-orientation="vertical"
+        tabindex="0"
+        :aria-valuenow="splitterAriaValueNow"
+        aria-valuemin="0"
+        aria-valuemax="100"
         @mousedown="onSplitterMouseDown"
+        @touchstart="onSplitterTouchStart"
+        @keydown="onSplitterKeyDown"
         @dblclick="resetWidths"
       />
       <section
@@ -1284,6 +1374,11 @@ if ((window as any).__TAURI_MOCK__) {
 
 .editor-splitter:hover {
   background: var(--color-accent);
+}
+
+.editor-splitter:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
 }
 
 .export-progress-overlay {

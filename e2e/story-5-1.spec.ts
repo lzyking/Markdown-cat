@@ -1,4 +1,61 @@
+import type { Page } from '@playwright/test'
 import { test, expect } from './fixtures'
+
+async function getLayoutMetrics(page: Page) {
+  return page.evaluate(() => {
+    const workspace = document.querySelector('.editor-workspace') as HTMLElement | null
+    const sourcePane = document.querySelector('.source-pane') as HTMLElement | null
+    const previewPane = document.querySelector('.preview-pane') as HTMLElement | null
+
+    if (!workspace || !sourcePane || !previewPane) {
+      throw new Error('Splitter layout elements not found')
+    }
+
+    return {
+      containerWidth: workspace.getBoundingClientRect().width,
+      sourceWidth: sourcePane.getBoundingClientRect().width,
+      previewWidth: previewPane.getBoundingClientRect().width,
+    }
+  })
+}
+
+async function dispatchSplitterTouchDrag(page: Page, targetClientX: number) {
+  return page.evaluate(async (nextClientX) => {
+    const splitter = document.querySelector('[role="separator"]') as HTMLElement | null
+    if (!splitter) {
+      throw new Error('Splitter not found')
+    }
+
+    const rect = splitter.getBoundingClientRect()
+    const startX = rect.left + rect.width / 2
+    const clientY = rect.top + rect.height / 2
+
+    const createTouchEvent = (type: string, clientX: number) => {
+      const event = new Event(type, { bubbles: true, cancelable: true }) as TouchEvent
+      const activeTouches = type === 'touchend' || type === 'touchcancel'
+        ? []
+        : [{ clientX, clientY }]
+      const changedTouches = [{ clientX, clientY }]
+      Object.defineProperty(event, 'touches', { value: activeTouches })
+      Object.defineProperty(event, 'targetTouches', { value: activeTouches })
+      Object.defineProperty(event, 'changedTouches', { value: changedTouches })
+      return event
+    }
+
+    splitter.dispatchEvent(createTouchEvent('touchstart', startX))
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+
+    const moveEvent = createTouchEvent('touchmove', nextClientX)
+    window.dispatchEvent(moveEvent)
+    const defaultPrevented = moveEvent.defaultPrevented
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+
+    window.dispatchEvent(createTouchEvent('touchend', nextClientX))
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+
+    return { defaultPrevented }
+  }, targetClientX)
+}
 
 // TID: S5.1-E2E 可拖动 Splitter 组件
 // Priority: P1
@@ -131,5 +188,119 @@ test.describe('Story 5.1：可拖动 Splitter 组件', () => {
       // 1100 - 4px splitter = 1096；两栏应接近 548
       expect(Math.abs(sourceBox.width - previewBox.width)).toBeLessThanOrEqual(5)
     }
+  })
+
+  // TID: S5.1-E2E-006
+  // Priority: P1
+  // AC: 键盘 ArrowLeft / ArrowRight 应按容器宽度 2% 步进调整，并遵守最小/最大宽度约束。
+  test('键盘 ArrowLeft / ArrowRight 应按 2% 步进调整并受 200px 边界约束', async ({ page }) => {
+    const splitter = page.locator('[role="separator"]')
+    await expect(splitter).toHaveAttribute('tabindex', '0')
+    await splitter.focus()
+    await expect(splitter).toBeFocused()
+
+    const before = await getLayoutMetrics(page)
+    const step = Math.max(1, before.containerWidth * 0.02)
+
+    await page.keyboard.press('ArrowRight')
+    await page.waitForTimeout(50)
+    const afterRight = await getLayoutMetrics(page)
+    expect(afterRight.sourceWidth - before.sourceWidth).toBeGreaterThanOrEqual(step - 2)
+    expect(afterRight.sourceWidth - before.sourceWidth).toBeLessThanOrEqual(step + 2)
+    expect(afterRight.sourceWidth).toBeLessThanOrEqual(before.containerWidth - 200)
+
+    await page.keyboard.press('ArrowLeft')
+    await page.waitForTimeout(50)
+    const afterLeft = await getLayoutMetrics(page)
+    expect(Math.abs(afterLeft.sourceWidth - before.sourceWidth)).toBeLessThanOrEqual(2)
+
+    await page.keyboard.press('Home')
+    await page.waitForTimeout(50)
+    const atMin = await getLayoutMetrics(page)
+    expect(atMin.sourceWidth).toBeGreaterThanOrEqual(200)
+    expect(atMin.sourceWidth).toBeLessThanOrEqual(202)
+
+    await page.keyboard.press('ArrowLeft')
+    await page.waitForTimeout(50)
+    const stillAtMin = await getLayoutMetrics(page)
+    expect(stillAtMin.sourceWidth).toBeGreaterThanOrEqual(200)
+    expect(stillAtMin.sourceWidth).toBeLessThanOrEqual(202)
+  })
+
+  // TID: S5.1-E2E-007
+  // Priority: P1
+  // AC: 键盘 Home / End 应分别跳到最小/最大宽度。
+  test('键盘 Home / End 应将左栏跳到最小 200px 与最大 containerWidth-200', async ({ page }) => {
+    const splitter = page.locator('[role="separator"]')
+    await splitter.focus()
+
+    await page.keyboard.press('Home')
+    await page.waitForTimeout(50)
+    const atMin = await getLayoutMetrics(page)
+    expect(atMin.sourceWidth).toBeGreaterThanOrEqual(200)
+    expect(atMin.sourceWidth).toBeLessThanOrEqual(202)
+
+    await page.keyboard.press('End')
+    await page.waitForTimeout(50)
+    const atMax = await getLayoutMetrics(page)
+    expect(atMax.sourceWidth).toBeGreaterThanOrEqual(atMax.containerWidth - 202)
+    expect(atMax.sourceWidth).toBeLessThanOrEqual(atMax.containerWidth - 198)
+
+    await page.keyboard.press('ArrowRight')
+    await page.waitForTimeout(50)
+    const stillAtMax = await getLayoutMetrics(page)
+    expect(stillAtMax.sourceWidth).toBeGreaterThanOrEqual(atMax.containerWidth - 202)
+    expect(stillAtMax.sourceWidth).toBeLessThanOrEqual(atMax.containerWidth - 198)
+  })
+
+  // TID: S5.1-E2E-008
+  // Priority: P1
+  // AC: Splitter 应暴露 aria-valuenow / aria-valuemin / aria-valuemax，并随宽度变化同步更新。
+  test('Splitter 应暴露并更新 ARIA 值语义属性', async ({ page }) => {
+    const splitter = page.locator('[role="separator"]')
+    const initial = await getLayoutMetrics(page)
+    await expect(splitter).toHaveAttribute('aria-valuemin', '0')
+    await expect(splitter).toHaveAttribute('aria-valuemax', '100')
+    await expect(splitter).toHaveAttribute(
+      'aria-valuenow',
+      String(Math.round((initial.sourceWidth / initial.containerWidth) * 100)),
+    )
+
+    await splitter.focus()
+    await page.keyboard.press('Home')
+    await page.waitForTimeout(50)
+    const atMin = await getLayoutMetrics(page)
+    await expect(splitter).toHaveAttribute(
+      'aria-valuenow',
+      String(Math.round((atMin.sourceWidth / atMin.containerWidth) * 100)),
+    )
+
+    await page.keyboard.press('End')
+    await page.waitForTimeout(50)
+    const atMax = await getLayoutMetrics(page)
+    await expect(splitter).toHaveAttribute(
+      'aria-valuenow',
+      String(Math.round((atMax.sourceWidth / atMax.containerWidth) * 100)),
+    )
+  })
+
+  // TID: S5.1-E2E-009
+  // Priority: P2
+  // AC: 触屏拖拽应复用相同宽度约束，并在 touchmove 中阻止默认滚动行为。
+  test('触屏拖拽应更新宽度、遵守边界并在 touchmove 中阻止默认行为', async ({ page }) => {
+    const metrics = await getLayoutMetrics(page)
+    const { defaultPrevented } = await dispatchSplitterTouchDrag(page, metrics.containerWidth - 1)
+    expect(defaultPrevented).toBe(true)
+
+    const afterDrag = await getLayoutMetrics(page)
+    expect(afterDrag.sourceWidth).toBeGreaterThanOrEqual(metrics.containerWidth - 202)
+    expect(afterDrag.sourceWidth).toBeLessThanOrEqual(metrics.containerWidth - 198)
+
+    const { defaultPrevented: preventedAtMin } = await dispatchSplitterTouchDrag(page, 0)
+    expect(preventedAtMin).toBe(true)
+
+    const afterClamp = await getLayoutMetrics(page)
+    expect(afterClamp.sourceWidth).toBeGreaterThanOrEqual(200)
+    expect(afterClamp.sourceWidth).toBeLessThanOrEqual(202)
   })
 })
