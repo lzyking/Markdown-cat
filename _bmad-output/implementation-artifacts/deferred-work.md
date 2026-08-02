@@ -123,7 +123,8 @@ origin: migrated from legacy ledger ("## DW-23"), 2026-08-02
 location: `src/components/PreviewPane.vue` 的 `responsiveStyle` computed 中三档字号为字面量，未引用 `DESIGN.md`/`--font-size-*` token，后续设计系统扩展断点字号时需要手动同步维护。
 severity: low
 reason: PreviewPane 响应式断点下的字号（13px/13.5px/14px）以硬编码 CSS 变量覆盖形式实现，未接入项目既有的设计 token 体系。
-status: open
+status: done 2026-08-02
+resolution: resolved by sweep bundle dw-design-token-light-theme-migration
 
 ### DW-32: PreviewPane.vue、SlashMenu.vue、SettingsModal.vue 中存在硬编码的深色偏向颜色（如 `rgba(255,255,255,...)` 叠加层、`--color-primary`/`--color-text-subtle` 等未纳入新 token 体系的变量），一旦 6.2 启用浅色主题切换，这些组件在浅色主题下会显示不一致。
 
@@ -131,7 +132,8 @@ origin: migrated from legacy ledger ("## DW-24"), 2026-08-02
 location: 代码审查发现 `src/components/PreviewPane.vue`、`src/components/SlashMenu.vue` 使用硬编码浅色叠加层颜色值，`src/components/SettingsModal.vue` 引用了本次未纳入统一 token 体系的旧变量名。
 severity: low
 reason: PreviewPane.vue、SlashMenu.vue、SettingsModal.vue 中存在硬编码的深色偏向颜色（如 `rgba(255,255,255,...)` 叠加层、`--color-primary`/`--color-text-subtle` 等未纳入新 token 体系的变量），一旦 6.2 启用浅色主题切换，这些组件在浅色主题下会显示不一致。
-status: open
+status: done 2026-08-02
+resolution: resolved by sweep bundle dw-design-token-light-theme-migration
 
 ### DW-33: 语义色 token（`--color-success`/`--color-error`/`--color-warning`）与层级阴影/遮罩 token（`--shadow-dialog`、硬编码黑色遮罩）未随 10 套主题做差异化配色，浅色主题下可能显得突兀。
 
@@ -139,7 +141,8 @@ origin: migrated from legacy ledger ("## DW-25"), 2026-08-02
 location: `src/styles/app.css` 中 success/error/warning 与 `--shadow-dialog` 仍固定为原深色方案数值，未在任何 `[data-theme=...]` 块中覆盖，AC 未强制要求但会影响浅色主题下的视觉一致性。
 severity: low
 reason: 语义色 token（`--color-success`/`--color-error`/`--color-warning`）与层级阴影/遮罩 token（`--shadow-dialog`、硬编码黑色遮罩）未随 10 套主题做差异化配色，浅色主题下可能显得突兀。
-status: open
+status: done 2026-08-02
+resolution: resolved by sweep bundle dw-design-token-light-theme-migration
 
 ### DW-34: 新增的 10 套主题色板缺少自动化对比度/视觉回归测试，后续调色或新增主题时容易再次引入低对比度问题。
 
@@ -477,3 +480,15 @@ location: src/components/MenuBar.vue (`.menu-dropdown` 顶层容器 vs `.submenu
 severity: low
 reason: 对比 `.submenu-dropdown` 已有 `role="menu"` 而 `.menu-dropdown` 从未添加该属性（本次改动未涉及该属性），说明这是既有实现遗留的不一致，非本次 DW-37/DW-38 修复引入。
 status: open
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-dw-31-33-theme-visual-token-consistency-2.md`
+  summary: `src/styles/preview-export.css` still hard-codes the pre-existing `rgba(255, 255, 255, 0.05)`/`rgba(255, 255, 255, 0.02)` table header/zebra-stripe overlay literals instead of the new `--color-overlay-header`/`--color-overlay-zebra` tokens, so HTML exports of tables will not match the live `PreviewPane.vue` rendering once a light theme is active.
+  evidence: Confirmed via `grep -n "rgba(255" src/styles/preview-export.css`; this file was explicitly out of scope for the DW-31/32/33 spec (only `PreviewPane.vue`/`SlashMenu.vue`/`SettingsModal.vue`/`src/lib/preview.ts`/`src/styles/app.css` were in scope) and predates this change.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-dw-31-33-theme-visual-token-consistency-2.md`
+  summary: `src/components/SettingsModal.vue` hard-codes a success-state text color (`color: #3fb950`) instead of referencing the `--color-success` token, so it will not adopt the new per-theme light-mode success color values added by this story.
+  evidence: Confirmed via `grep -n "#3fb950" src/components/SettingsModal.vue` (line 696); this hardcode predates this change and was outside the DW-31/32/33 task list.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-dw-31-33-theme-visual-token-consistency-2.md`
+  summary: `src/components/PublishConfluenceModal.vue` hard-codes a confirm-button text color (`color: white`) and references an undefined `--color-danger` fallback variable instead of the token-system `--color-error`, so it neither adopts `--color-accent-foreground` nor the new per-theme error colors.
+  evidence: Confirmed via `grep -n "color: white\|color-danger" src/components/PublishConfluenceModal.vue` (lines 263, 272); this file was explicitly excluded from the DW-31/32/33 scope and the hardcode predates this change.

@@ -331,13 +331,13 @@ onUnmounted(() => {
 }
 
 .preview-content :deep(th) {
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--color-overlay-header);
   font-weight: var(--font-weight-semibold);
   color: var(--color-text-primary);
 }
 
 .preview-content :deep(tr:nth-child(even)) {
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--color-overlay-zebra);
 }
 
 .preview-content :deep(pre::-webkit-scrollbar),

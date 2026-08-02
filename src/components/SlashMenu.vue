@@ -95,14 +95,14 @@ onUnmounted(() => {
   background: var(--color-background-elevated, #25282e);
   border: 1px solid var(--color-border, #3a3f4b);
   border-radius: var(--rounded-md, 6px);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  box-shadow: var(--shadow-menu);
   padding: 4px;
 }
 
 .slash-menu-header {
   font-size: 11px;
   font-weight: 600;
-  color: var(--color-text-subtle, #8a909e);
+  color: var(--color-text-muted);
   padding: 6px 8px 4px;
   text-transform: uppercase;
   letter-spacing: 0.5px;
@@ -128,8 +128,8 @@ onUnmounted(() => {
 .shortcut {
   font-family: var(--font-body-mono, monospace);
   font-size: 11px;
-  color: var(--color-text-subtle, #8a909e);
-  background: rgba(255, 255, 255, 0.06);
+  color: var(--color-text-muted);
+  background: var(--color-overlay-shortcut);
   padding: 2px 5px;
   border-radius: 3px;
 }

@@ -34,6 +34,9 @@
   --color-success: #3FB950;
   --color-error: #F85149;
   --color-warning: #D29922;
+  --color-overlay-header: rgba(255, 255, 255, 0.05);
+  --color-overlay-zebra: rgba(255, 255, 255, 0.02);
+  --color-overlay-shortcut: rgba(255, 255, 255, 0.06);
 
   --color-code-background: var(--code-bg);
   --color-selection: #264F78;
@@ -53,6 +56,12 @@
   --font-size-display: 22px;
   --font-size-heading: 18px;
   --font-size-body: 14px;
+  --font-size-preview-compact: 13px;
+  --font-size-preview-regular: 13.5px;
+  --font-size-preview-wide: 14px;
+  --font-size-preview-heading-compact: 16px;
+  --font-size-preview-heading-regular: 17px;
+  --font-size-preview-heading-wide: 18px;
   --font-size-label: 12px;
   --font-size-status: 12px;
   --font-size-icon: 10px;
@@ -89,6 +98,7 @@
      浮层/对话框使用柔和阴影，其他界面元素无阴影
      ================================ */
   --shadow-dialog: 0 12px 40px rgba(0, 0, 0, 0.4);
+  --shadow-menu: 0 8px 24px rgba(0, 0, 0, 0.4);
 
   /* ================================
      布局尺寸（Layout Sizes）
@@ -117,7 +127,15 @@
   --color-text-muted: #8C8173;
   --color-text-disabled: #B3A89A;
   --color-accent-foreground: #FFFFFF;
+  --color-success: #2F8F4E;
+  --color-error: #C44536;
+  --color-warning: #9A6700;
+  --color-overlay-header: rgba(0, 0, 0, 0.05);
+  --color-overlay-zebra: rgba(0, 0, 0, 0.02);
+  --color-overlay-shortcut: rgba(0, 0, 0, 0.06);
   --color-selection: #D9CCFF;
+  --shadow-dialog: 0 12px 40px rgba(0, 0, 0, 0.14);
+  --shadow-menu: 0 8px 24px rgba(0, 0, 0, 0.12);
 }
 
 [data-theme='cream-warm'] {
@@ -134,7 +152,15 @@
   --color-text-muted: #987C61;
   --color-text-disabled: #BAA389;
   --color-accent-foreground: #FFF8EE;
+  --color-success: #3B8C58;
+  --color-error: #B94A3C;
+  --color-warning: #996300;
+  --color-overlay-header: rgba(0, 0, 0, 0.05);
+  --color-overlay-zebra: rgba(0, 0, 0, 0.02);
+  --color-overlay-shortcut: rgba(0, 0, 0, 0.06);
   --color-selection: #FFD9A8;
+  --shadow-dialog: 0 12px 40px rgba(0, 0, 0, 0.15);
+  --shadow-menu: 0 8px 24px rgba(0, 0, 0, 0.13);
 }
 
 [data-theme='ice-cool'] {
@@ -151,7 +177,15 @@
   --color-text-muted: #7590A7;
   --color-text-disabled: #9DB2C5;
   --color-accent-foreground: #F8FBFF;
+  --color-success: #2E8B57;
+  --color-error: #C23B3B;
+  --color-warning: #8F5F00;
+  --color-overlay-header: rgba(0, 0, 0, 0.05);
+  --color-overlay-zebra: rgba(0, 0, 0, 0.02);
+  --color-overlay-shortcut: rgba(0, 0, 0, 0.06);
   --color-selection: #BFE4FF;
+  --shadow-dialog: 0 12px 40px rgba(0, 0, 0, 0.13);
+  --shadow-menu: 0 8px 24px rgba(0, 0, 0, 0.12);
 }
 
 [data-theme='sand-sandstone'] {
@@ -168,7 +202,15 @@
   --color-text-muted: #8A7A67;
   --color-text-disabled: #AFA08C;
   --color-accent-foreground: #FFF7EE;
+  --color-success: #4A8453;
+  --color-error: #B64B3A;
+  --color-warning: #9B6400;
+  --color-overlay-header: rgba(0, 0, 0, 0.05);
+  --color-overlay-zebra: rgba(0, 0, 0, 0.02);
+  --color-overlay-shortcut: rgba(0, 0, 0, 0.06);
   --color-selection: #F0D5AD;
+  --shadow-dialog: 0 12px 40px rgba(0, 0, 0, 0.15);
+  --shadow-menu: 0 8px 24px rgba(0, 0, 0, 0.13);
 }
 
 [data-theme='nord-light'] {
@@ -185,7 +227,15 @@
   --color-text-muted: #6B7486;
   --color-text-disabled: #98A2B3;
   --color-accent-foreground: #F7F9FC;
+  --color-success: #2F855A;
+  --color-error: #C53030;
+  --color-warning: #8C5A00;
+  --color-overlay-header: rgba(0, 0, 0, 0.05);
+  --color-overlay-zebra: rgba(0, 0, 0, 0.02);
+  --color-overlay-shortcut: rgba(0, 0, 0, 0.06);
   --color-selection: #CDDBF0;
+  --shadow-dialog: 0 12px 40px rgba(0, 0, 0, 0.14);
+  --shadow-menu: 0 8px 24px rgba(0, 0, 0, 0.12);
 }
 
 [data-theme='cyberpunk-dark'] {

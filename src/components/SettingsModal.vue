@@ -598,7 +598,7 @@ function resetConfluenceFeedback() {
 
 .tab-btn.active {
   color: var(--color-text-primary);
-  border-bottom-color: var(--color-primary, #58a6ff);
+  border-bottom-color: var(--color-accent);
 }
 
 .modal-body {
@@ -644,7 +644,7 @@ function resetConfluenceFeedback() {
 
 .path-input:focus,
 .text-input:focus {
-  border-color: var(--color-primary);
+  border-color: var(--color-accent);
 }
 
 .field-group {
@@ -736,8 +736,8 @@ function resetConfluenceFeedback() {
 }
 
 .btn-primary {
-  background: var(--color-primary, #58a6ff);
-  color: #ffffff;
+  background: var(--color-accent);
+  color: var(--color-accent-foreground);
 }
 
 .btn-primary:hover:not(:disabled) {

@@ -5,18 +5,18 @@ export const PREVIEW_REGULAR_MAX_WIDTH = 640
 
 const PREVIEW_LAYOUT_STYLES: Record<PreviewLayout, Record<string, string>> = {
   compact: {
-    '--preview-body-font-size': '13px',
-    '--preview-heading-font-size': '16px',
+    '--preview-body-font-size': 'var(--font-size-preview-compact)',
+    '--preview-heading-font-size': 'var(--font-size-preview-heading-compact)',
     '--preview-padding': '16px',
   },
   regular: {
-    '--preview-body-font-size': '13.5px',
-    '--preview-heading-font-size': '17px',
+    '--preview-body-font-size': 'var(--font-size-preview-regular)',
+    '--preview-heading-font-size': 'var(--font-size-preview-heading-regular)',
     '--preview-padding': '18px',
   },
   wide: {
-    '--preview-body-font-size': '14px',
-    '--preview-heading-font-size': '18px',
+    '--preview-body-font-size': 'var(--font-size-preview-wide)',
+    '--preview-heading-font-size': 'var(--font-size-preview-heading-wide)',
     '--preview-padding': '20px',
   },
 }
