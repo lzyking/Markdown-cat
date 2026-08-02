@@ -1,0 +1,11 @@
+{
+  "DW-14": {
+    "answered_at": "2026-08-02",
+    "bundle_name": "",
+    "effect": "build",
+    "intent": "Implement WebView2 PrintToPdf for Windows and a webkit2gtk print-to-file path for Linux behind the existing export_pdf command, to be written and verified on real Windows/Linux build environments outside this sandbox (not achievable as an automated bundle here).",
+    "key": "1",
+    "label": "Scope a new story for Windows/Linux native PDF export",
+    "resolution": ""
+  }
+}

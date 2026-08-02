@@ -354,6 +354,7 @@ location: src-tauri/src/commands/pdf_export.rs
 severity: medium
 reason: "Export as PDF..." 的原生 PDF 生成通过 macOS 专属的 WKWebView `createPDFWithConfiguration:completionHandler:` + `loadFileURL:allowingReadAccessToURL:` 实现，并在本沙盒环境中通过独立示例程序实测生成了有效 PDF（含真实渲染的表格/代码块内容）。Windows（WebView2 `PrintToPdf`）与 Linux（webkit2gtk）分别需要不同的原生 API，且本沙盒仅安装了 `aarch64-apple-darwin` target，无法交叉编译或运行验证，因此这两个平台当前直接返回 `ERR_PDF_EXPORT_UNSUPPORTED_PLATFORM: 当前平台暂不支持 PDF 导出`。这是工程能力缺口（而非需要人工操作的外部依赖），应作为独立故事补齐 Windows/Linux 原生 PDF 渲染，并在对应平台上实际构建验证后再关闭。
 status: open
+decision: 2026-08-02 Scope a new story for Windows/Linux native PDF export — Implement WebView2 PrintToPdf for Windows and a webkit2gtk print-to-file path for Linux behind the existing export_pdf command, to be written and verified on real Windows/Linux build environments outside this sandbox (not achievable as an automated bundle here).
 
 ### DW-15: PDF 渲染在 `on_page_load` Finished 事件后立即调用 `createPDFWithConfiguration`，未额外等待布局稳定
 
