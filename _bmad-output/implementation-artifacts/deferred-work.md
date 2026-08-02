@@ -320,7 +320,8 @@ origin: migrated from legacy ledger ("## DW-46"), 2026-08-02
 location: `e2e/story-7-2.spec.ts`、`e2e/fixtures.ts` 中对粘贴图片相关命令均通过 `window.__TAURI_MOCK__` 注入返回值模拟，未驱动真实 Tauri 后端往返；这些集成层面的行为目前仅由 `src-tauri/src/doc.rs` 内的 Rust 单元测试局部覆盖，缺少跨前后端的真实闭环验证。
 severity: low
 reason: 现有测试大量依赖对 `save_image_asset`/`copy_asset_file`/`convertFileSrc` 等 Tauri 命令的 mock，未覆盖真实文件系统写入、asset 协议作用域动态放宽、命名冲突退避、以及迁移失败等路径的端到端行为。
-status: open
+status: done 2026-08-02
+resolution: resolved by sweep bundle dw-clipboard-paste-backend-test-coverage
 
 ### DW-55: 剪贴板粘贴图片写盘为异步操作，`SourceEditor.insertText` 在后端保存返回后才读取当前选区来定位插入点，若用户在写盘期间继续输入会导致图片 Markdown 链接插入到错误的光标位置。
 

@@ -312,24 +312,20 @@ pub fn read_image_asset(
 /// 将剪贴板图片以二进制形式写入指定目录。
 /// 写入成功后会动态放宽 asset:// 协议的可访问范围，
 /// 使目标目录之外（例如 $HOME/$APPDATA 之外的自定义保存目录）中的图片也能在预览中正常渲染。
-#[tauri::command]
-pub fn save_image_asset(
-    app_handle: tauri::AppHandle,
-    target_dir: String,
-    filename: String,
-    bytes: Vec<u8>,
+fn save_image_asset_impl<R: tauri::Runtime>(
+    manager: &impl tauri::Manager<R>,
+    target_dir: &str,
+    filename: &str,
+    bytes: &[u8],
 ) -> CmdResult<ImageSaveResult> {
-    use tauri::Manager;
-
-    let directory = std::path::Path::new(&target_dir);
-    match doc::save_binary_asset_to_dir(directory, &filename, &bytes) {
+    let directory = std::path::Path::new(target_dir);
+    match doc::save_binary_asset_to_dir(directory, filename, bytes) {
         Ok((final_name, full_path)) => {
-            if let Err(e) = app_handle
+            if let Err(e) = manager
                 .asset_protocol_scope()
                 .allow_directory(directory, true)
             {
-                // File is already written; only the asset:// preview scope grant failed.
-                // Do not fail the whole command for this, but surface it for diagnosis.
+                // 文件已成功落盘；这里只是 asset:// 预览放宽失败，不应反向打断保存结果。
                 eprintln!("Failed to widen asset protocol scope for {target_dir}: {e}");
             }
             CmdResult::success(ImageSaveResult {
@@ -341,11 +337,41 @@ pub fn save_image_asset(
     }
 }
 
+#[tauri::command]
+pub fn save_image_asset(
+    app_handle: tauri::AppHandle,
+    target_dir: String,
+    filename: String,
+    bytes: Vec<u8>,
+) -> CmdResult<ImageSaveResult> {
+    save_image_asset_impl(&app_handle, &target_dir, &filename, &bytes)
+}
+
 /// 将暂存资源文件从旧目录迁移到新目录（用于文档“另存为”后同步图片位置）。
 /// 若源文件不存在，视为无需迁移，返回成功但 `migrated: false`。
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub struct AssetMigrationResult {
     pub migrated: bool,
+}
+
+fn copy_asset_file_impl<R: tauri::Runtime>(
+    manager: &impl tauri::Manager<R>,
+    from_dir: &str,
+    to_dir: &str,
+    filename: &str,
+) -> CmdResult<AssetMigrationResult> {
+    let from = std::path::Path::new(from_dir);
+    let to = std::path::Path::new(to_dir);
+    match doc::copy_asset_between_dirs(from, to, filename) {
+        Ok(Some(_path)) => {
+            if let Err(e) = manager.asset_protocol_scope().allow_directory(to, true) {
+                eprintln!("Failed to widen asset protocol scope for {to_dir}: {e}");
+            }
+            CmdResult::success(AssetMigrationResult { migrated: true })
+        }
+        Ok(None) => CmdResult::success(AssetMigrationResult { migrated: false }),
+        Err(e) => CmdResult::failure(e),
+    }
 }
 
 #[tauri::command]
@@ -355,18 +381,136 @@ pub fn copy_asset_file(
     to_dir: String,
     filename: String,
 ) -> CmdResult<AssetMigrationResult> {
+    copy_asset_file_impl(&app_handle, &from_dir, &to_dir, &filename)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{copy_asset_file_impl, save_image_asset_impl};
+    use crate::doc;
+    use std::fs;
     use tauri::Manager;
 
-    let from = std::path::Path::new(&from_dir);
-    let to = std::path::Path::new(&to_dir);
-    match doc::copy_asset_between_dirs(from, to, &filename) {
-        Ok(Some(_path)) => {
-            if let Err(e) = app_handle.asset_protocol_scope().allow_directory(to, true) {
-                eprintln!("Failed to widen asset protocol scope for {to_dir}: {e}");
-            }
-            CmdResult::success(AssetMigrationResult { migrated: true })
-        }
-        Ok(None) => CmdResult::success(AssetMigrationResult { migrated: false }),
-        Err(e) => CmdResult::failure(e),
+    #[test]
+    fn save_image_asset_impl_writes_file_and_allows_asset_directory() {
+        let app = tauri::test::mock_app();
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let asset_dir = temp_dir.path().join("images");
+
+        // 写入前先确认 mock app 的默认作用域尚未放行该目录，
+        // 这样后续的 is_allowed 断言才能真正证明是本次调用触发了放宽。
+        assert!(!app.asset_protocol_scope().is_allowed(&asset_dir));
+
+        let result = save_image_asset_impl(
+            &app,
+            &asset_dir.to_string_lossy(),
+            "paste.png",
+            &[1, 2, 3, 4],
+        );
+
+        assert!(result.ok);
+        let data = result.data.expect("save result data");
+        assert_eq!(data.filename, "paste.png");
+        assert_eq!(
+            fs::read(asset_dir.join("paste.png")).unwrap(),
+            vec![1, 2, 3, 4]
+        );
+        assert!(app.asset_protocol_scope().is_allowed(&asset_dir));
+    }
+
+    #[test]
+    fn save_image_asset_impl_avoids_name_collision_at_command_level() {
+        let app = tauri::test::mock_app();
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let asset_dir = temp_dir.path().join("images");
+
+        let first = save_image_asset_impl(&app, &asset_dir.to_string_lossy(), "paste.png", &[1, 2]);
+        let second =
+            save_image_asset_impl(&app, &asset_dir.to_string_lossy(), "paste.png", &[3, 4]);
+
+        assert!(first.ok);
+        assert!(second.ok);
+
+        let first_data = first.data.expect("first save result");
+        let second_data = second.data.expect("second save result");
+        assert_eq!(first_data.filename, "paste.png");
+        assert_ne!(second_data.filename, first_data.filename);
+        assert_eq!(
+            fs::read(asset_dir.join(&first_data.filename)).unwrap(),
+            vec![1, 2]
+        );
+        assert_eq!(
+            fs::read(asset_dir.join(&second_data.filename)).unwrap(),
+            vec![3, 4]
+        );
+    }
+
+    #[test]
+    fn copy_asset_file_impl_copies_file_and_allows_target_directory() {
+        let app = tauri::test::mock_app();
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let from_dir = temp_dir.path().join("from");
+        let to_dir = temp_dir.path().join("to");
+
+        fs::create_dir_all(&from_dir).expect("create source dir");
+        fs::write(from_dir.join("move.png"), [5, 6, 7]).expect("seed source asset");
+
+        // 迁移前目标目录尚不存在，作用域也理应尚未放行。
+        assert!(!app.asset_protocol_scope().is_allowed(&to_dir));
+
+        let result = copy_asset_file_impl(
+            &app,
+            &from_dir.to_string_lossy(),
+            &to_dir.to_string_lossy(),
+            "move.png",
+        );
+
+        assert!(result.ok);
+        let data = result.data.expect("migration result");
+        assert!(data.migrated);
+        assert_eq!(fs::read(to_dir.join("move.png")).unwrap(), vec![5, 6, 7]);
+        assert!(app.asset_protocol_scope().is_allowed(&to_dir));
+    }
+
+    #[test]
+    fn copy_asset_file_impl_skips_missing_source_without_creating_target_dir() {
+        let app = tauri::test::mock_app();
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let from_dir = temp_dir.path().join("from");
+        let to_dir = temp_dir.path().join("to");
+
+        let result = copy_asset_file_impl(
+            &app,
+            &from_dir.to_string_lossy(),
+            &to_dir.to_string_lossy(),
+            "missing.png",
+        );
+
+        assert!(result.ok);
+        let data = result.data.expect("migration result");
+        assert!(!data.migrated);
+        assert!(!to_dir.exists());
+    }
+
+    #[test]
+    fn copy_asset_file_impl_returns_failure_when_target_path_is_occupied_by_file() {
+        let app = tauri::test::mock_app();
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let from_dir = temp_dir.path().join("from");
+        let to_dir = temp_dir.path().join("occupied");
+
+        fs::create_dir_all(&from_dir).expect("create source dir");
+        fs::write(from_dir.join("move.png"), [8, 9]).expect("seed source asset");
+        fs::write(&to_dir, b"not a directory").expect("occupy target path with file");
+
+        let result = copy_asset_file_impl(
+            &app,
+            &from_dir.to_string_lossy(),
+            &to_dir.to_string_lossy(),
+            "move.png",
+        );
+
+        assert!(!result.ok);
+        assert_eq!(result.error, Some(doc::ERR_SAVE_FAILED.to_string()));
     }
 }
