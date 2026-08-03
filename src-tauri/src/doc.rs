@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -85,13 +85,7 @@ pub fn is_safe_filename(filename: &str) -> bool {
     )
 }
 
-/// 在目标目录中为给定文件名寻找一个不冲突的最终文件名，并原子化写入内容。
-/// 使用 `create_new` 原子创建文件，避免"检测存在性 -> 写入"之间的竞态窗口
-/// （例如两次几乎同时的粘贴生成了相同的候选文件名）导致互相覆盖。
-/// 若原文件名已被占用，在扩展名前追加递增序号直至写入成功。
-fn write_unique_file(save_dir: &Path, filename: &str, bytes: &[u8]) -> Result<String, String> {
-    use std::io::Write;
-
+fn build_unique_candidate(filename: &str, counter: u32) -> String {
     let path = Path::new(filename);
     let stem = path
         .file_stem()
@@ -99,17 +93,37 @@ fn write_unique_file(save_dir: &Path, filename: &str, bytes: &[u8]) -> Result<St
         .unwrap_or_else(|| filename.to_string());
     let ext = path.extension().map(|s| s.to_string_lossy().to_string());
 
+    if counter == 0 {
+        filename.to_string()
+    } else {
+        match &ext {
+            Some(ext) => format!("{}_{}.{}", stem, counter, ext),
+            None => format!("{}_{}", stem, counter),
+        }
+    }
+}
+
+fn find_unique_destination(save_dir: &Path, filename: &str) -> (String, PathBuf) {
     let mut counter: u32 = 0;
     loop {
-        let candidate = if counter == 0 {
-            filename.to_string()
-        } else {
-            match &ext {
-                Some(ext) => format!("{}_{}.{}", stem, counter, ext),
-                None => format!("{}_{}", stem, counter),
-            }
-        };
+        let candidate = build_unique_candidate(filename, counter);
         let candidate_path = save_dir.join(&candidate);
+        if !candidate_path.exists() {
+            return (candidate, candidate_path);
+        }
+        counter += 1;
+    }
+}
+
+/// 在目标目录中为给定文件名寻找一个不冲突的最终文件名，并原子化写入内容。
+/// 使用 `create_new` 原子创建文件，避免"检测存在性 -> 写入"之间的竞态窗口
+/// （例如两次几乎同时的粘贴生成了相同的候选文件名）导致互相覆盖。
+/// 若原文件名已被占用，在扩展名前追加递增序号直至写入成功。
+fn write_unique_file(save_dir: &Path, filename: &str, bytes: &[u8]) -> Result<String, String> {
+    use std::io::Write;
+
+    loop {
+        let (candidate, candidate_path) = find_unique_destination(save_dir, filename);
         match fs::OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -121,10 +135,7 @@ fn write_unique_file(save_dir: &Path, filename: &str, bytes: &[u8]) -> Result<St
                     .map(|_| candidate)
                     .map_err(|_| ERR_SAVE_FAILED.to_string());
             }
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                counter += 1;
-                continue;
-            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
             Err(_) => return Err(ERR_SAVE_FAILED.to_string()),
         }
     }
@@ -156,7 +167,7 @@ pub fn copy_asset_between_dirs(
     from_dir: &Path,
     to_dir: &Path,
     filename: &str,
-) -> Result<Option<String>, String> {
+) -> Result<Option<(String, String)>, String> {
     if !is_safe_filename(filename) {
         return Err(ERR_INVALID_FILENAME.to_string());
     }
@@ -167,11 +178,18 @@ pub fn copy_asset_between_dirs(
     if !to_dir.exists() {
         fs::create_dir_all(to_dir).map_err(|_| ERR_SAVE_FAILED.to_string())?;
     }
-    let dest = to_dir.join(filename);
+    let (final_name, dest) = if source == to_dir.join(filename) {
+        (filename.to_string(), to_dir.join(filename))
+    } else {
+        find_unique_destination(to_dir, filename)
+    };
     if source != dest {
+        // Unlike `write_unique_file`, the copy path still has a tiny TOCTOU window
+        // between selecting a free name and `fs::copy`; preserving the existing
+        // behavior is sufficient for this migration-only scenario.
         fs::copy(&source, &dest).map_err(|_| ERR_SAVE_FAILED.to_string())?;
     }
-    Ok(Some(dest.to_string_lossy().to_string()))
+    Ok(Some((final_name, dest.to_string_lossy().to_string())))
 }
 
 #[cfg(test)]
@@ -244,7 +262,9 @@ mod tests {
         let result = copy_asset_between_dirs(&from_dir, &to_dir, "img_move.png")
             .expect("copy should succeed");
 
-        assert!(result.is_some());
+        let (final_name, final_path) = result.expect("copied file metadata");
+        assert_eq!(final_name, "img_move.png");
+        assert_eq!(final_path, to_dir.join("img_move.png").to_string_lossy());
         assert!(to_dir.join("img_move.png").exists());
         assert_eq!(
             std::fs::read(to_dir.join("img_move.png")).unwrap(),
@@ -262,5 +282,29 @@ mod tests {
             .expect("missing source should not error");
 
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn copy_asset_between_dirs_avoids_overwriting_existing_target_file() {
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let from_dir = temp_dir.path().join("old_assets");
+        let to_dir = temp_dir.path().join("new_assets");
+        save_binary_asset_to_dir(&from_dir, "img_dup.png", &[5, 6]).expect("seed source file");
+        save_binary_asset_to_dir(&to_dir, "img_dup.png", &[1, 2]).expect("seed target file");
+
+        let result = copy_asset_between_dirs(&from_dir, &to_dir, "img_dup.png")
+            .expect("copy should succeed");
+
+        let (final_name, final_path) = result.expect("copied file metadata");
+        assert_eq!(final_name, "img_dup_1.png");
+        assert_eq!(final_path, to_dir.join("img_dup_1.png").to_string_lossy());
+        assert_eq!(
+            std::fs::read(to_dir.join("img_dup.png")).unwrap(),
+            vec![1, 2]
+        );
+        assert_eq!(
+            std::fs::read(to_dir.join("img_dup_1.png")).unwrap(),
+            vec![5, 6]
+        );
     }
 }

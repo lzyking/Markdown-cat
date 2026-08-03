@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { openUrl } from '@tauri-apps/plugin-opener'
@@ -28,6 +28,7 @@ import {
 import { openDialog, saveDialog } from './lib/tauri-dialog'
 import type {
   AppConfig,
+  AssetMigrationResult,
   ClipboardImagePayload,
   CmdResult,
   ConfluenceImageUpload,
@@ -146,6 +147,7 @@ function createPublishProgressState(): PublishProgressState {
 
 let autoSaveTimer: number | null = null
 let exportAbortController: AbortController | null = null
+let suppressAutoSave = false
 
 function formatSaveError(rawError?: string): string {
   if (!rawError) return '保存失败：未知错误'
@@ -168,6 +170,108 @@ function formatPdfExportError(rawError?: string): string {
   if (rawError.startsWith('ERR_PDF_EXPORT_')) return '导出 PDF 失败：PDF 生成失败，请重试'
   if (rawError.startsWith('导出 PDF 失败：')) return rawError
   return `导出 PDF 失败：${rawError}`
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function replaceAssetReferenceFilename(markdown: string, oldFilename: string, newFilename: string): string {
+  if (oldFilename === newFilename) {
+    return markdown
+  }
+
+  let result = markdown
+  // A reference may appear in its raw form or percent-encoded (e.g. a filename
+  // with spaces written as "%20"); the extractor decodes both to the same
+  // logical name, so the replacement must be able to find and rewrite either
+  // spelling, not just the decoded one.
+  const variants = new Set([oldFilename, encodeURIComponent(oldFilename)])
+  for (const oldVariant of variants) {
+    const escaped = escapeRegExp(oldVariant)
+    const newVariant = oldVariant === oldFilename ? newFilename : encodeURIComponent(newFilename)
+    result = result
+      .replace(
+        new RegExp(`(!\\[[^\\]]*\\]\\(\\s*)(\\.\\/assets\\/|assets\\/)${escaped}(?=(?:\\s+["'(]|\\s*\\)))`, 'g'),
+        (_, prefix: string, assetPrefix: string) => `${prefix}${assetPrefix}${newVariant}`,
+      )
+      .replace(
+        new RegExp(`^(\\s*\\[[^\\]]+\\]:\\s*)(\\.\\/assets\\/|assets\\/)${escaped}(?=(?:\\s+["'(]|\\s*$))`, 'gm'),
+        (_, prefix: string, assetPrefix: string) => `${prefix}${assetPrefix}${newVariant}`,
+      )
+      .replace(
+        new RegExp(`(<img\\b[^>]*\\bsrc\\s*=\\s*["'])(\\.\\/assets\\/|assets\\/)${escaped}(?=["'])`, 'gi'),
+        (_, prefix: string, assetPrefix: string) => `${prefix}${assetPrefix}${newVariant}`,
+      )
+      .replace(
+        new RegExp(`(<img\\b[^>]*\\bsrc\\s*=\\s*)(\\.\\/assets\\/|assets\\/)${escaped}(?=[\\s>])`, 'gi'),
+        (_, prefix: string, assetPrefix: string) => `${prefix}${assetPrefix}${newVariant}`,
+      )
+  }
+  return result
+}
+
+function replaceSiblingImageReferenceFilename(markdown: string, oldFilename: string, newFilename: string): string {
+  if (oldFilename === newFilename) {
+    return markdown
+  }
+
+  let result = markdown
+  // Mirrors `replaceAssetReferenceFilename`'s raw + percent-encoded variant
+  // handling, so a sibling image reference written with an encoded filename
+  // (e.g. spaces as "%20") is rewritten too instead of being left stale.
+  const variants = new Set([oldFilename, encodeURIComponent(oldFilename)])
+  for (const oldVariant of variants) {
+    const escaped = escapeRegExp(oldVariant)
+    const newVariant = oldVariant === oldFilename ? newFilename : encodeURIComponent(newFilename)
+    result = result.replace(
+      new RegExp(`(!\\[[^\\]]*\\]\\(\\s*\\.\\/)${escaped}(?=(?:\\s+["'(]|\\s*\\)))`, 'g'),
+      `$1${newVariant}`,
+    )
+  }
+  return result
+}
+
+interface AssetRename {
+  oldFilename: string
+  newFilename: string
+  replaceFilename: (markdown: string, oldFilename: string, newFilename: string) => string
+}
+
+// Applies a batch of asset renames to `markdown` in two phases so that
+// renames cannot interfere with each other when one rename's new filename
+// happens to equal another rename's old filename (a real possibility when
+// several assets migrate into the same target directory and get
+// uniquified against each other, e.g. "pic.png" -> "pic_1.png" while an
+// unrelated "pic_1.png" -> "pic_1_1.png"). Phase 1 swaps every old filename
+// for a unique, synthetic placeholder using the same contextual replacer
+// used for the real rename, so placeholders never collide with any real
+// filename. Phase 2 swaps each placeholder for its final filename via a
+// plain literal replace, which is safe because placeholders are unique.
+function applyAssetRenames(markdown: string, renames: AssetRename[]): string {
+  const effective = renames.filter(({ oldFilename, newFilename }) => oldFilename !== newFilename)
+  if (effective.length === 0) {
+    return markdown
+  }
+
+  let result = markdown
+  const placeholders = effective.map(({ oldFilename, replaceFilename }, index) => {
+    const placeholder = `\u0000__save_as_rename_${index}__\u0000`
+    result = replaceFilename(result, oldFilename, placeholder)
+    return placeholder
+  })
+
+  effective.forEach(({ newFilename }, index) => {
+    const placeholder = placeholders[index]
+    // `replaceFilename` (e.g. `replaceAssetReferenceFilename`) may rewrite a
+    // percent-encoded occurrence using `encodeURIComponent(placeholder)`
+    // rather than the raw placeholder text — swap both spellings back so
+    // neither leaves a stray placeholder behind.
+    result = result.split(placeholder).join(newFilename)
+    result = result.split(encodeURIComponent(placeholder)).join(encodeURIComponent(newFilename))
+  })
+
+  return result
 }
 
 const currentFilePath = ref<string | null>(null)
@@ -676,6 +780,9 @@ function triggerDebouncedAutoSave(newContent: string) {
 }
 
 watch(content, (newVal) => {
+  if (suppressAutoSave) {
+    return
+  }
   saveStatus.value = 'unsaved'
   triggerDebouncedAutoSave(newVal)
 })
@@ -780,10 +887,58 @@ async function handleSaveAsFile() {
       if (res.ok && res.data) {
         currentFilePath.value = res.data.path
         filename.value = res.data.filename
-        saveStatus.value = 'success'
-        saveMessage.value = `已另存为 ${res.data.filename}`
         if (!(window as any).__TAURI_MOCK__) {
           await invoke('update_last_opened_file', { filePath: res.data.path })
+        }
+
+        const skippedOrFailed: string[] = []
+        let rewriteFailed = false
+        // Renames are recorded here instead of being applied to the content
+        // immediately. When multiple assets in the same document are
+        // migrated, a later rename's *old* filename can collide with an
+        // earlier rename's *new* filename (e.g. "pic.png" -> "pic_1.png",
+        // then a separate "pic_1.png" -> "pic_1_1.png"). Applying renames
+        // one at a time against the same mutable string would let the
+        // second replacement re-match text the first replacement just
+        // wrote, corrupting the first image's reference. Collecting every
+        // rename first and applying them all in a single batch (via
+        // collision-proof placeholders, see `applyAssetRenames`) keeps each
+        // rename isolated regardless of migration order.
+        const pendingRenames: AssetRename[] = []
+        const migrateAsset = async (
+          fromDir: string,
+          toDir: string,
+          assetFilename: string,
+          replaceFilename: (markdown: string, oldFilename: string, newFilename: string) => string,
+          logLabel: string,
+        ) => {
+          try {
+            const migrationRes = await invoke<CmdResult<AssetMigrationResult>>('copy_asset_file', {
+              fromDir,
+              toDir,
+              filename: assetFilename,
+            })
+
+            if (!migrationRes.ok || !migrationRes.data) {
+              skippedOrFailed.push(assetFilename)
+              console.error(`${logLabel} migration failed:`, migrationRes.error || assetFilename)
+              return
+            }
+
+            if (!migrationRes.data.migrated) {
+              skippedOrFailed.push(assetFilename)
+              console.error(`${logLabel} migration skipped:`, assetFilename)
+              return
+            }
+
+            const finalFilename = migrationRes.data.finalFilename
+            if (finalFilename && finalFilename !== assetFilename) {
+              pendingRenames.push({ oldFilename: assetFilename, newFilename: finalFilename, replaceFilename })
+            }
+          } catch (migrationErr) {
+            skippedOrFailed.push(assetFilename)
+            console.error(`${logLabel} migration error:`, migrationErr)
+          }
         }
 
         if (priorAssetsDir) {
@@ -792,15 +947,13 @@ async function handleSaveAsFile() {
           if (newAssetsDir && newAssetsDir !== priorAssetsDir) {
             const referencedAssets = extractAssetReferences(content.value)
             for (const assetFilename of referencedAssets) {
-              try {
-                await invoke('copy_asset_file', {
-                  fromDir: priorAssetsDir,
-                  toDir: newAssetsDir,
-                  filename: assetFilename,
-                })
-              } catch (migrationErr) {
-                console.error('Asset migration error:', migrationErr)
-              }
+              await migrateAsset(
+                priorAssetsDir,
+                newAssetsDir,
+                assetFilename,
+                replaceAssetReferenceFilename,
+                'Asset',
+              )
             }
           }
         }
@@ -810,18 +963,51 @@ async function handleSaveAsFile() {
           if (newDocDir && newDocDir !== priorDocDir) {
             const referencedSiblingImages = extractSiblingImageReferences(content.value)
             for (const imageFilename of referencedSiblingImages) {
-              try {
-                await invoke('copy_asset_file', {
-                  fromDir: priorDocDir,
-                  toDir: newDocDir,
-                  filename: imageFilename,
-                })
-              } catch (migrationErr) {
-                console.error('Sibling image migration error:', migrationErr)
-              }
+              await migrateAsset(
+                priorDocDir,
+                newDocDir,
+                imageFilename,
+                replaceSiblingImageReferenceFilename,
+                'Sibling image',
+              )
             }
           }
         }
+
+        const updatedContent = applyAssetRenames(content.value, pendingRenames)
+
+        if (updatedContent !== content.value) {
+          suppressAutoSave = true
+          content.value = updatedContent
+          await nextTick()
+          suppressAutoSave = false
+
+          try {
+            const updatedSaveRes = await invoke<CmdResult<SaveResult>>('save_document_as', {
+              targetPath: res.data.path,
+              content: updatedContent,
+            })
+            if (!updatedSaveRes.ok) {
+              rewriteFailed = true
+              console.error('Failed to persist renamed asset references:', updatedSaveRes.error)
+            }
+          } catch (rewriteErr) {
+            rewriteFailed = true
+            console.error('Failed to persist renamed asset references:', rewriteErr)
+          }
+        }
+
+        saveStatus.value = 'success'
+        const warnings: string[] = []
+        if (skippedOrFailed.length > 0) {
+          warnings.push(`${skippedOrFailed.length} 张图片未能随文档迁移，请检查图片链接`)
+        }
+        if (rewriteFailed) {
+          warnings.push('已改名的图片引用未能立即写回磁盘，请再次保存确认')
+        }
+        saveMessage.value = warnings.length > 0
+          ? `已另存为 ${res.data.filename}（警告：${warnings.join('；')}）`
+          : `已另存为 ${res.data.filename}`
       } else {
         saveStatus.value = 'failure'
         saveMessage.value = `另存为失败：${res.error}`

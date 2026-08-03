@@ -305,7 +305,8 @@ origin: migrated from legacy ledger ("## DW-43"), 2026-08-02
 location: `src-tauri/src/doc.rs` 的 `copy_asset_between_dirs` 对 `dest` 路径直接调用 `fs::copy(&source, &dest)`，未检测 `dest` 是否已存在；若新文档目录中恰好已有一个同名（含相同时间戳+Hash）图片文件，迁移会静默覆盖它。触发概率极低（需要文件名完全一致），但修复需要同时更新 Markdown 正文中对应的图片引用路径，非本轮可安全自动完成的最小改动，故记录以待后续统一处理。
 severity: low
 reason: `copy_asset_between_dirs`（“另存为”资源迁移）在目标目录已存在同名文件时会用 `fs::copy` 直接覆盖，而非像粘贴保存那样做唯一化处理。
-status: open
+status: done 2026-08-03
+resolution: resolved by sweep bundle dw-save-as-asset-migration-hardening
 
 ### DW-52: “另存为”资源迁移失败或跳过（`migrated: false`，例如源文件已被外部删除）时，前端仅 `console.error` 记录，UI 仍提示“已另存为 …”成功，用户无法察觉正文中引用的图片实际未随文档迁移。
 
@@ -313,7 +314,8 @@ origin: migrated from legacy ledger ("## DW-44"), 2026-08-02
 location: `src/App.vue` 的 `handleSaveAsFile` 对 `copy_asset_file` 的返回结果（含 `AssetMigrationResult.migrated`）未做任何检查，也未在迁移失败/跳过时更新 `saveMessage`；用户保存后仍会看到成功提示，直到重新打开文档发现图片链接失效才会察觉。
 severity: low
 reason: “另存为”资源迁移失败或跳过（`migrated: false`，例如源文件已被外部删除）时，前端仅 `console.error` 记录，UI 仍提示“已另存为 …”成功，用户无法察觉正文中引用的图片实际未随文档迁移。
-status: open
+status: done 2026-08-03
+resolution: resolved by sweep bundle dw-save-as-asset-migration-hardening
 
 ### DW-53: `extractAssetReferences` 仅识别 `![alt](./assets/filename)` 这一种内联 Markdown 图片写法，无法识别 HTML `<img>`、引用式链接、带标题的链接，或不带 `./` 前缀的 `assets/filename` 路径，这些引用在“另存为”迁移时会被漏迁移。
 
@@ -321,7 +323,8 @@ origin: migrated from legacy ledger ("## DW-45"), 2026-08-02
 location: `src/lib/image-assets.ts` 的 `extractAssetReferences` 使用固定正则 `/!\[[^\]]*\]\(\.\/assets\/([^)\s]+)\)/g` 匹配，无法覆盖用户手写或从其他工具粘贴进来的其它合法 Markdown/HTML 图片引用写法，导致这些引用对应的图片文件在目录迁移后失效。
 severity: low
 reason: `extractAssetReferences` 仅识别 `![alt](./assets/filename)` 这一种内联 Markdown 图片写法，无法识别 HTML `<img>`、引用式链接、带标题的链接，或不带 `./` 前缀的 `assets/filename` 路径，这些引用在“另存为”迁移时会被漏迁移。
-status: open
+status: done 2026-08-03
+resolution: resolved by sweep bundle dw-save-as-asset-migration-hardening
 
 ### DW-54: 现有测试大量依赖对 `save_image_asset`/`copy_asset_file`/`convertFileSrc` 等 Tauri 命令的 mock，未覆盖真实文件系统写入、asset 协议作用域动态放宽、命名冲突退避、以及迁移失败等路径的端到端行为。
 
@@ -554,3 +557,20 @@ status: open
 - source_spec: `spec-dw-50-restore-current-file-path.md`
   summary: Narrow startup race — if a user opens a different document via the file-open dialog while the `onMounted` last-opened-file restore's `read_external_document` await is still pending, the restore's resolved `filename`/`content`/`currentFilePath` values can overwrite the user's newly opened document with stale restored data.
   evidence: The restore branch in `onMounted` has no guard comparing `currentFilePath.value` (or an in-flight token) before assigning `filename.value`/`content.value`/`currentFilePath.value` after the await resolves; this pre-existing pattern (the `filename`/`content` assignments already had this race before this fix) is a narrow window limited to early app startup before this async call resolves.
+
+- source_spec: `spec-save-as-asset-migration-hardening.md`
+  summary: `extractSiblingImageReferences`/`replaceSiblingImageReferenceFilename` still only recognize plain inline `![alt](./filename)` sibling-image links, unlike the newly widened `extractAssetReferences`, which now also covers HTML `<img>`, reference-style, and titled-link forms for the `assets/` case.
+  evidence: `src/lib/image-assets.ts`'s `extractSiblingImageReferences` regex (`/!\[[^\]]*\]\(\.\/([^)\s/\\]+)\)/g`) was not touched by this story's diff — confirmed via `git diff 4870d431586447f7abe860a0d9aa9fdeaa3789b0 HEAD -- src/lib/image-assets.ts`, which shows no changes to that function — so a sibling image referenced via `<img>`, reference-style, or a titled link still loses its migration/rename coverage after "Save As" moves an already-saved document, even though the equivalent `assets/`-relative form is now handled.
+  evidence: Independently raised by two review passes (a prior pass on this same spec, and this pass's Blind Hunter/Edge Case Hunter agents both flagging the related percent-encoding gap in the sibling path), which increases confidence this is a real, reproducible gap rather than noise.
+
+- source_spec: `spec-save-as-asset-migration-hardening.md`
+  summary: `extractAssetReferences` treats a query-string/fragment suffix (e.g. `./assets/pic.png?raw=1` or `./assets/pic.png#frag`) as part of the literal filename, so migration looks for a file named `pic.png?raw=1` on disk, never finds it, and silently reports the reference as skipped/failed instead of migrating the real underlying file.
+  evidence: The capturing group in all three `extractAssetReferences` patterns (`([^)\s]+?)`, `([^\s]+)`, `([^"]+)`/`([^']+)`/`([^\s"'=<>`]+)`) has no special handling for `?`/`#`, and this behavior is unchanged from the pre-existing pattern before this story (`/!\[[^\]]*\]\(\.\/assets\/([^)\s]+)\)/g` had the same unbounded capture) — confirmed via `git diff 4870d431586447f7abe860a0d9aa9fdeaa3789b0 HEAD -- src/lib/image-assets.ts`, which shows the character-class semantics for the base filename capture were preserved, only the surrounding alternation/anchors were extended. Pre-existing gap surfaced incidentally by this story's expanded test/review attention on `extractAssetReferences`.
+
+- source_spec: `spec-save-as-asset-migration-hardening.md`
+  summary: `extractAssetReferences` matches image references inside fenced code blocks (e.g. a documentation snippet showing `<img src="./assets/demo.png">`), so a purely illustrative/example reference is treated as a real asset dependency and triggers a spurious "not migrated" warning or unnecessary migration attempt during Save As.
+  evidence: `extractAssetReferences` (src/lib/image-assets.ts) runs its three regex patterns directly against the raw `markdown` string with no fenced-code-block exclusion; confirmed no fence-stripping logic exists anywhere in the function. This is not a new regression — the original single pattern before this story already matched inside fenced code the same way — but this story's added HTML `<img>` pattern widens the surface area (HTML snippets in code fences are a common documentation idiom), making the pre-existing gap more likely to trigger in practice.
+
+- source_spec: `spec-save-as-asset-migration-hardening.md`
+  summary: `extractSiblingImageReferences`/`replaceSiblingImageReferenceFilename` still only recognize plain inline `![alt](./filename)` sibling-image links and were not extended to the HTML `<img>`, reference-style, or titled-link forms this story added to `extractAssetReferences`, so a sibling image referenced via any of those richer syntaxes loses migration/rename coverage after "Save As" relocates an already-saved document.
+  evidence: Confirmed via `git diff 4870d431586447f7abe860a0d9aa9fdeaa3789b0 HEAD -- src/lib/image-assets.ts` that `extractSiblingImageReferences`'s regex (`/!\[[^\]]*\]\(\.\/([^)\s/\\]+)\)/g`) is unchanged by this story. Independently re-surfaced by this pass's Edge Case Hunter agent in addition to a prior review pass on the same spec, increasing confidence this is a real, reproducible gap.

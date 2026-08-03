@@ -74,6 +74,11 @@ export interface SaveResult {
   path: string
 }
 
+export interface AssetMigrationResult {
+  migrated: boolean
+  finalFilename?: string | null
+}
+
 export interface ClipboardImagePayload {
   mimeType: 'image/png' | 'image/jpeg'
   bytes: string

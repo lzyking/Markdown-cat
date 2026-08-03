@@ -368,8 +368,11 @@ pub fn save_image_asset(
 /// 将暂存资源文件从旧目录迁移到新目录（用于文档“另存为”后同步图片位置）。
 /// 若源文件不存在，视为无需迁移，返回成功但 `migrated: false`。
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct AssetMigrationResult {
     pub migrated: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub final_filename: Option<String>,
 }
 
 fn copy_asset_file_impl<R: tauri::Runtime>(
@@ -381,13 +384,19 @@ fn copy_asset_file_impl<R: tauri::Runtime>(
     let from = std::path::Path::new(from_dir);
     let to = std::path::Path::new(to_dir);
     match doc::copy_asset_between_dirs(from, to, filename) {
-        Ok(Some(_path)) => {
+        Ok(Some((final_filename, _path))) => {
             if let Err(e) = manager.asset_protocol_scope().allow_directory(to, true) {
                 eprintln!("Failed to widen asset protocol scope for {to_dir}: {e}");
             }
-            CmdResult::success(AssetMigrationResult { migrated: true })
+            CmdResult::success(AssetMigrationResult {
+                migrated: true,
+                final_filename: Some(final_filename),
+            })
         }
-        Ok(None) => CmdResult::success(AssetMigrationResult { migrated: false }),
+        Ok(None) => CmdResult::success(AssetMigrationResult {
+            migrated: false,
+            final_filename: None,
+        }),
         Err(e) => CmdResult::failure(e),
     }
 }
@@ -421,12 +430,8 @@ mod tests {
         // 这样后续的 is_allowed 断言才能真正证明是本次调用触发了放宽。
         assert!(!app.asset_protocol_scope().is_allowed(&asset_dir));
 
-        let result = save_image_asset_impl(
-            &app,
-            &asset_dir.to_string_lossy(),
-            "paste.png",
-            PNG_BYTES,
-        );
+        let result =
+            save_image_asset_impl(&app, &asset_dir.to_string_lossy(), "paste.png", PNG_BYTES);
 
         assert!(result.ok);
         let data = result.data.expect("save result data");
@@ -441,7 +446,8 @@ mod tests {
         let temp_dir = tempfile::tempdir().expect("create temp dir");
         let asset_dir = temp_dir.path().join("images");
 
-        let first = save_image_asset_impl(&app, &asset_dir.to_string_lossy(), "paste.png", PNG_BYTES);
+        let first =
+            save_image_asset_impl(&app, &asset_dir.to_string_lossy(), "paste.png", PNG_BYTES);
         let second = save_image_asset_impl(
             &app,
             &asset_dir.to_string_lossy(),
@@ -456,7 +462,10 @@ mod tests {
         let second_data = second.data.expect("second save result");
         assert_eq!(first_data.filename, "paste.png");
         assert_ne!(second_data.filename, first_data.filename);
-        assert_eq!(fs::read(asset_dir.join(&first_data.filename)).unwrap(), PNG_BYTES);
+        assert_eq!(
+            fs::read(asset_dir.join(&first_data.filename)).unwrap(),
+            PNG_BYTES
+        );
         assert_eq!(
             fs::read(asset_dir.join(&second_data.filename)).unwrap(),
             vec![0x89, 0x50, 0x4e, 0x47, 0xaa, 0xbb]
@@ -545,6 +554,7 @@ mod tests {
         assert!(result.ok);
         let data = result.data.expect("migration result");
         assert!(data.migrated);
+        assert_eq!(data.final_filename.as_deref(), Some("move.png"));
         assert_eq!(fs::read(to_dir.join("move.png")).unwrap(), vec![5, 6, 7]);
         assert!(app.asset_protocol_scope().is_allowed(&to_dir));
     }
@@ -566,7 +576,35 @@ mod tests {
         assert!(result.ok);
         let data = result.data.expect("migration result");
         assert!(!data.migrated);
+        assert_eq!(data.final_filename, None);
         assert!(!to_dir.exists());
+    }
+
+    #[test]
+    fn copy_asset_file_impl_returns_final_filename_after_collision_rename() {
+        let app = tauri::test::mock_app();
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let from_dir = temp_dir.path().join("from");
+        let to_dir = temp_dir.path().join("to");
+
+        fs::create_dir_all(&from_dir).expect("create source dir");
+        fs::create_dir_all(&to_dir).expect("create target dir");
+        fs::write(from_dir.join("move.png"), [5, 6, 7]).expect("seed source asset");
+        fs::write(to_dir.join("move.png"), [1, 2, 3]).expect("seed occupied target");
+
+        let result = copy_asset_file_impl(
+            &app,
+            &from_dir.to_string_lossy(),
+            &to_dir.to_string_lossy(),
+            "move.png",
+        );
+
+        assert!(result.ok);
+        let data = result.data.expect("migration result");
+        assert!(data.migrated);
+        assert_eq!(data.final_filename.as_deref(), Some("move_1.png"));
+        assert_eq!(fs::read(to_dir.join("move.png")).unwrap(), vec![1, 2, 3]);
+        assert_eq!(fs::read(to_dir.join("move_1.png")).unwrap(), vec![5, 6, 7]);
     }
 
     #[test]

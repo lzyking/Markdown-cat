@@ -87,26 +87,43 @@ export function isRelativeAssetPath(path: string): boolean {
 }
 
 /**
- * 从 Markdown 文本中提取指向 `./assets/<filename>` 的图片引用文件名。
+ * 从 Markdown 文本中提取指向 `./assets/<filename>` / `assets/<filename>` 的图片引用文件名。
  * 用于“另存为”时判断是否需要将暂存资源迁移到新目录。
  */
 export function extractAssetReferences(markdown: string): string[] {
-  const pattern = /!\[[^\]]*\]\(\.\/assets\/([^)\s]+)\)/g
   const names = new Set<string>()
-  let match: RegExpExecArray | null
-  while ((match = pattern.exec(markdown)) !== null) {
-    let candidate: string
-    try {
-      candidate = decodeURIComponent(match[1])
-    } catch {
-      // Malformed percent-encoding (e.g. a stray "%" in the filename) — skip
-      // rather than let this abort "Save As" after the document has already
-      // been written to its new location.
-      continue
-    }
-    // Only accept plain filenames — ignore anything with path traversal/segments.
-    if (candidate && !candidate.includes('/') && !candidate.includes('\\') && candidate !== '..') {
-      names.add(candidate)
+  const patterns = [
+    /!\[[^\]]*\]\(\s*(?:\.\/)?assets\/([^)\s]+?)(?=\s+(?:"[^"]*"|'[^']*'|\([^)]*\))|\s*\))/g,
+    /^\s*\[[^\]]+\]:\s*(?:\.\/)?assets\/([^\s]+)(?=\s+(?:"[^"]*"|'[^']*'|\([^)]*\))|\s*$)/gm,
+    /<img\b[^>]*\bsrc\s*=\s*(?:"(?:\.\/)?assets\/([^"]+)"|'(?:\.\/)?assets\/([^']+)'|(?:\.\/)?assets\/([^\s"'=<>`]+))/gi,
+  ]
+
+  for (const pattern of patterns) {
+    let match: RegExpExecArray | null
+    while ((match = pattern.exec(markdown)) !== null) {
+      const rawCandidate = match.slice(1).find(Boolean)
+      if (!rawCandidate) {
+        continue
+      }
+
+      let candidate: string
+      try {
+        candidate = decodeURIComponent(rawCandidate)
+      } catch {
+        // Malformed percent-encoding (e.g. a stray "%" in the filename) — skip
+        // rather than let this abort "Save As" after the document has already
+        // been written to its new location.
+        continue
+      }
+      // Only accept plain filenames — ignore anything with path traversal/segments.
+      if (
+        candidate
+        && candidate !== '..'
+        && !candidate.includes('/')
+        && !candidate.includes('\\')
+      ) {
+        names.add(candidate)
+      }
     }
   }
   return Array.from(names)
