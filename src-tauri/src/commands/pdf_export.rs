@@ -150,6 +150,23 @@ async fn export_pdf_macos(
         }
     }
 
+    // WKWebView's `Finished` page-load event fires once the document and its
+    // declared resources have loaded, but does not guarantee that all async
+    // layout/reflow work (e.g. very large inlined base64 images or deeply
+    // nested content triggering extra reflows) has fully settled. This brief,
+    // fixed stabilization wait reduces the theoretical risk of capturing an
+    // unstable layout for such complex documents (deferred-work DW-15) without
+    // adding a native re-entrant readiness check, which is out of scope here.
+    if let Err(error) =
+        tauri::async_runtime::spawn_blocking(|| std::thread::sleep(Duration::from_millis(150)))
+            .await
+            .map_err(|e| format!("ERR_PDF_EXPORT_RUNTIME_FAILED: {}", e))
+    {
+        cleanup_hidden_window(&hidden_window);
+        let _ = temp_html.close();
+        return Err(error);
+    }
+
     let (pdf_tx, pdf_rx) = mpsc::channel();
     let window_for_pdf = hidden_window.clone();
     if let Err(error) = hidden_window

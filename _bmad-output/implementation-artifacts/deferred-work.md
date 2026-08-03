@@ -375,7 +375,8 @@ origin: review (Blind Hunter) of 8-2-export-pdf-with-exact-styles, 2026-08-01
 location: src-tauri/src/commands/pdf_export.rs (export_pdf_macos)
 severity: low
 reason: WKWebView 的 `Finished` 事件在文档与资源加载完成后触发，本轮针对含标题/表格/代码块的示例文档做了两次真实 PDF 生成验证，输出内容正确、字体真实渲染，未观察到布局未稳定的问题。但对更复杂/大型文档（如包含大量内联 base64 图片或深层嵌套内容触发额外异步重排的场景）是否总能在该事件后立即达到最终稳定布局，本轮未做压力测试验证，理论上仍存在极端情况下过早截图的风险，故记录以待后续更充分的真实场景测试。
-status: open
+status: done 2026-08-03
+resolution: resolved by sweep bundle dw-pdf-export-layout-and-test-coverage
 
 ### DW-16: Story 8.2 的 e2e 测试仅覆盖前端到 `export_pdf` 命令调用边界，未覆盖失败/超时/取消/不支持平台等分支，也未在真实打包应用中通过原生 WebKit 路径验证
 
@@ -383,7 +384,8 @@ origin: review (Blind Hunter) of 8-2-export-pdf-with-exact-styles, 2026-08-01
 location: e2e/story-8-2.spec.ts; src-tauri/src/commands/pdf_export.rs
 severity: medium
 reason: 与仓库中其他 story（如 8-1）一致，`e2e/story-8-2.spec.ts` 通过 mock `window.__TAURI_MOCK__.invoke` 来验证前端到 IPC 边界的行为，无法在 Playwright 浏览器环境中驱动真实的 Rust/WKWebView 原生渲染路径，也未新增覆盖 `export_pdf` 失败、`ERR_PDF_EXPORT_LOAD_TIMEOUT`/`ERR_PDF_EXPORT_RENDER_TIMEOUT`、用户取消、以及非 macOS 平台快速失败等分支的测试用例。本轮开发通过一次性独立 `cargo run --example` 冒烟测试脚本手动验证了成功路径的真实原生渲染（生成含真实字体的有效 PDF），但失败/超时/取消分支仍只有代码走查、未经自动化或人工验证，建议后续设计专门的原生集成测试或桌面自动化测试来补齐。
-status: open
+status: done 2026-08-03
+resolution: resolved by sweep bundle dw-pdf-export-layout-and-test-coverage
 
 ### DW-17: 内联失败的本地图片在导出目录与文档目录不同时会引用错误的相对路径
 
