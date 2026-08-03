@@ -276,7 +276,8 @@ origin: migrated from legacy ledger ("## DW-40"), 2026-08-02
 location: `src-tauri/src/commands/doc.rs` 的 `save_image_asset` 仅校验文件名合法性（无路径穿越），未对 `bytes` 做图片文件头/内容校验；前端已限制仅 `image/png`/`image/jpeg` 触发调用，但命令本身对上游数据来源零信任场景无防护。
 severity: low
 reason: `save_image_asset` 后端命令未校验写入的字节内容确实是合法的 PNG/JPEG 图片，理论上可被用于写入任意二进制内容到受信目录中的任意合法文件名。
-status: open
+status: done 2026-08-03
+resolution: resolved by sweep bundle dw-image-asset-content-validation
 
 ### DW-49: 前端将粘贴的图片二进制经 `ArrayBuffer` → `Uint8Array` → 普通 `number[]` 三次转换后再通过 IPC 传给后端，大尺寸截图会带来不必要的内存开销与潜在 UI 卡顿。
 

@@ -347,6 +347,10 @@ fn save_image_asset_base64_impl<R: tauri::Runtime>(
         Ok(bytes) => bytes,
         Err(_) => return CmdResult::failure("ERR_INVALID_IMAGE_DATA".to_string()),
     };
+    // 复用既有图片内容校验，避免借合法文件名把任意二进制写入受信资源目录。
+    if !looks_like_image_content(std::path::Path::new(filename), &bytes) {
+        return CmdResult::failure("ERR_UNSUPPORTED_IMAGE_TYPE".to_string());
+    }
 
     save_image_asset_impl(manager, target_dir, filename, &bytes)
 }
@@ -405,6 +409,8 @@ mod tests {
     use std::fs;
     use tauri::Manager;
 
+    const PNG_BYTES: &[u8] = &[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a];
+
     #[test]
     fn save_image_asset_impl_writes_file_and_allows_asset_directory() {
         let app = tauri::test::mock_app();
@@ -419,16 +425,13 @@ mod tests {
             &app,
             &asset_dir.to_string_lossy(),
             "paste.png",
-            &[1, 2, 3, 4],
+            PNG_BYTES,
         );
 
         assert!(result.ok);
         let data = result.data.expect("save result data");
         assert_eq!(data.filename, "paste.png");
-        assert_eq!(
-            fs::read(asset_dir.join("paste.png")).unwrap(),
-            vec![1, 2, 3, 4]
-        );
+        assert_eq!(fs::read(asset_dir.join("paste.png")).unwrap(), PNG_BYTES);
         assert!(app.asset_protocol_scope().is_allowed(&asset_dir));
     }
 
@@ -438,9 +441,13 @@ mod tests {
         let temp_dir = tempfile::tempdir().expect("create temp dir");
         let asset_dir = temp_dir.path().join("images");
 
-        let first = save_image_asset_impl(&app, &asset_dir.to_string_lossy(), "paste.png", &[1, 2]);
-        let second =
-            save_image_asset_impl(&app, &asset_dir.to_string_lossy(), "paste.png", &[3, 4]);
+        let first = save_image_asset_impl(&app, &asset_dir.to_string_lossy(), "paste.png", PNG_BYTES);
+        let second = save_image_asset_impl(
+            &app,
+            &asset_dir.to_string_lossy(),
+            "paste.png",
+            &[0x89, 0x50, 0x4e, 0x47, 0xaa, 0xbb],
+        );
 
         assert!(first.ok);
         assert!(second.ok);
@@ -449,13 +456,10 @@ mod tests {
         let second_data = second.data.expect("second save result");
         assert_eq!(first_data.filename, "paste.png");
         assert_ne!(second_data.filename, first_data.filename);
-        assert_eq!(
-            fs::read(asset_dir.join(&first_data.filename)).unwrap(),
-            vec![1, 2]
-        );
+        assert_eq!(fs::read(asset_dir.join(&first_data.filename)).unwrap(), PNG_BYTES);
         assert_eq!(
             fs::read(asset_dir.join(&second_data.filename)).unwrap(),
-            vec![3, 4]
+            vec![0x89, 0x50, 0x4e, 0x47, 0xaa, 0xbb]
         );
     }
 
@@ -497,6 +501,25 @@ mod tests {
         assert!(!result.ok);
         assert_eq!(result.error, Some("ERR_INVALID_IMAGE_DATA".to_string()));
         assert!(!asset_dir.exists());
+    }
+
+    #[test]
+    fn save_image_asset_rejects_non_image_content_without_writing_file() {
+        let app = tauri::test::mock_app();
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let asset_dir = temp_dir.path().join("images");
+
+        let result = save_image_asset_base64_impl(
+            &app,
+            &asset_dir.to_string_lossy(),
+            "paste.png",
+            "bm90IGFuIGltYWdl",
+        );
+
+        assert!(!result.ok);
+        assert_eq!(result.error, Some("ERR_UNSUPPORTED_IMAGE_TYPE".to_string()));
+        assert!(!asset_dir.exists());
+        assert!(!app.asset_protocol_scope().is_allowed(&asset_dir));
     }
 
     #[test]
