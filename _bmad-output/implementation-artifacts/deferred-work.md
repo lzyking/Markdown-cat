@@ -294,7 +294,8 @@ origin: migrated from legacy ledger ("## DW-42"), 2026-08-02
 location: `src/App.vue` 的 `onMounted` 在 `read_external_document` 成功后仅赋值 `filename.value`/`content.value`，未对 `currentFilePath.value` 赋值（对比 `loadFileFromPath` 中会显式设置）；这是 `lastOpenedFile` 会话恢复机制的既有行为（本故事之前已存在），本故事新增的粘贴图片功能依赖 `currentFilePath` 判断保存目录，因而放大了该问题的可观察影响（自动恢复的文档粘贴图片会被存入回退 `assets/` 目录而非文档同目录）。
 severity: low
 reason: 通过“上次打开文件”自动恢复会话时，`App.vue` 的 `onMounted` 只恢复了 `filename`/`content`，未同步设置 `currentFilePath`，导致自动恢复后的文档被当作“未保存”处理。
-status: open
+status: done 2026-08-03
+resolution: resolved by sweep bundle dw-restore-session-current-file-path-fix
 seen-again: review of 8-1-export-self-contained-html.md (re-discovered independently, ex-DW-48)
 seen-again: review of 8-1-export-self-contained-html.md (re-confirmed still unresolved, ex-DW-49)
 
@@ -537,3 +538,19 @@ origin: migrated from legacy ledger ("review of spec-dw-47-49-55-clipboard-paste
 location: src/App.vue (handleClipboardImagePaste)
 reason: The success branch sets `saveStatus.value = 'success'` and a success message unconditionally after `sourceEditorRef.value?.insertText(...)`, without checking whether `sourceEditorRef.value` was actually available/truthy, so if the editor ref is unavailable at resolve time the file is still written to disk but no Markdown reference is inserted while the UI still reports success. This optional-chaining-without-verification pattern predates this story and is not a new regression.
 status: open
+
+- source_spec: `spec-dw-50-restore-current-file-path.md`
+  summary: Failed last-opened-file restore during `onMounted` does not clear `lastOpenedFile` from config, so the app retries loading the same broken path on every subsequent launch.
+  evidence: `src/App.vue` onMounted only sets `saveStatus`/`saveMessage`/`filename`/`content` when `loadRes.ok && loadRes.data`; when `read_external_document` returns `{ ok: false }`, the code falls through to `get_blank_document` but never calls a config update to clear `lastOpenedFile`, so the stale path persists and is retried on every future launch.
+
+- source_spec: `spec-dw-50-restore-current-file-path.md`
+  summary: If `read_external_document` throws during the `onMounted` last-opened-file restore (rather than resolving with `{ ok: false }`), the surrounding `try` aborts the rest of `onMounted`, skipping the blank-document fallback, `currentSavePath` fallback, and `resetWidths()`/resize-listener setup.
+  evidence: `src/App.vue` onMounted wraps the entire startup sequence (config load, restore, blank-document fallback, save-path fallback, `resetWidths()`) in one `try/catch`; an exception thrown by the `invoke('read_external_document', ...)` call inside the restore branch (not just a rejected/`ok:false` result) propagates to the outer `catch`, short-circuiting all subsequent startup steps.
+
+- source_spec: `spec-dw-50-restore-current-file-path.md`
+  summary: No regression test exists for "restore last-opened file, then paste image / save / export", even though `documentBaseDir` (which now correctly resolves from the restored `currentFilePath`) drives paste-image save location, autosave/save-as target resolution, and HTML/PDF/Confluence export asset resolution.
+  evidence: `src/App.vue` `documentBaseDir` computed property depends on `currentFilePath.value`; there is no existing unit or e2e test (checked `src/lib/*.test.ts` and `e2e/*.spec.ts`) covering the last-opened-file restore path combined with any of these downstream consumers, so a future refactor could silently regress this fix.
+
+- source_spec: `spec-dw-50-restore-current-file-path.md`
+  summary: Narrow startup race — if a user opens a different document via the file-open dialog while the `onMounted` last-opened-file restore's `read_external_document` await is still pending, the restore's resolved `filename`/`content`/`currentFilePath` values can overwrite the user's newly opened document with stale restored data.
+  evidence: The restore branch in `onMounted` has no guard comparing `currentFilePath.value` (or an in-flight token) before assigning `filename.value`/`content.value`/`currentFilePath.value` after the await resolves; this pre-existing pattern (the `filename`/`content` assignments already had this race before this fix) is a narrow window limited to early app startup before this async call resolves.

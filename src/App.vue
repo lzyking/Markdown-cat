@@ -1145,6 +1145,7 @@ onMounted(async () => {
           path: configRes.data.lastOpenedFile,
         })
         if (loadRes.ok && loadRes.data) {
+          currentFilePath.value = configRes.data.lastOpenedFile
           filename.value = loadRes.data.filename
           content.value = loadRes.data.content
           saveStatus.value = 'success'
