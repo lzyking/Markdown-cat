@@ -26,14 +26,15 @@ const emit = defineEmits<{
 const containerRef = ref<HTMLElement | null>(null)
 let view: EditorView | null = null
 let isApplyingExternalUpdate = false
+const editorInstanceId = crypto.randomUUID?.() ?? `${Date.now()}-${Math.random()}`
 let positionTokenSeq = 0
 // 跟踪的是粘贴发生瞬间的完整选区范围（from/to）与是否为折叠光标点位，
 // 这样"粘贴图片时选中了一段文本"仍能像原生粘贴一样替换该选区；而折叠光标（无选区）
 // 情形下用相同的映射偏向（bias）跟踪单点，避免同一位置发生的原生文本粘贴把单点
 // "撑开"成一段范围，导致图片引用错误地替换掉刚插入的文本而非跟在其后。
-const trackedPastePositions = new Map<number, { from: number; to: number; collapsed: boolean }>()
+const trackedPastePositions = new Map<string, { from: number; to: number; collapsed: boolean }>()
 
-function releasePositionToken(token?: number) {
+function releasePositionToken(token?: string) {
   if (token === undefined) {
     return
   }
@@ -41,8 +42,8 @@ function releasePositionToken(token?: number) {
   trackedPastePositions.delete(token)
 }
 
-function insertText(text: string, cursorOffset?: number, replaceSlashPrefix = false, positionToken?: number) {
-  if (!view) return
+function insertText(text: string, cursorOffset?: number, replaceSlashPrefix = false, positionToken?: string): boolean {
+  if (!view) return false
   const trackedPosition = positionToken === undefined ? undefined : trackedPastePositions.get(positionToken)
   if (positionToken !== undefined && trackedPosition !== undefined) {
     trackedPastePositions.delete(positionToken)
@@ -78,6 +79,7 @@ function insertText(text: string, cursorOffset?: number, replaceSlashPrefix = fa
   isApplyingExternalUpdate = false
   emit('update:modelValue', view.state.doc.toString())
   view.focus()
+  return true
 }
 
 function insertTemplate(template: string, cursorOffset?: number) {
@@ -106,7 +108,7 @@ async function emitClipboardImage(event: ClipboardEvent): Promise<void> {
   // 粘贴内容（原生粘贴被 preventDefault，不会发生该替换）时，才保留原始选区范围，
   // 让图片按原有行为替换用户当时选中的文本。
   const nativeAlsoHandlesPaste = hasOtherPasteableClipboardContent(clipboardData)
-  const positionToken = ++positionTokenSeq
+  const positionToken = `${editorInstanceId}:${++positionTokenSeq}`
   const selectionAtPaste = view.state.selection.main
   trackedPastePositions.set(positionToken, nativeAlsoHandlesPaste
     ? { from: selectionAtPaste.to, to: selectionAtPaste.to, collapsed: true }

@@ -1,6 +1,60 @@
 import type { Page } from '@playwright/test'
 import { test, expect } from './fixtures'
 
+async function getEditorMarkdown(page: Page) {
+  return page.evaluate(() => {
+    const cmView = (document.querySelector('.source-editor') as any)?.__codemirrorView
+    return cmView?.state.doc.toString() ?? ''
+  })
+}
+
+async function registerReadExternalDocumentHandler(page: Page) {
+  await page.evaluate(() => {
+    const w = window as any
+    w.__TAURI_MOCK__.__registerHandler('read_external_document', (args: any) => {
+      const path = String(args?.path || '')
+      const filename = path.split('/').at(-1) || 'Opened.md'
+      return {
+        ok: true,
+        data: {
+          filename,
+          content: `Loaded from ${filename}`,
+        },
+      }
+    })
+  })
+}
+
+async function registerPendingSaveImageAsset(page: Page) {
+  await page.evaluate(() => {
+    const w = window as any
+    w.__PENDING_SAVE_IMAGE_ASSET__ = {
+      args: null,
+      resolve: null,
+    }
+    w.__TAURI_MOCK__.__registerHandler('save_image_asset', (args: any) => new Promise((resolve) => {
+      w.__PENDING_SAVE_IMAGE_ASSET__.args = args
+      w.__PENDING_SAVE_IMAGE_ASSET__.resolve = () => resolve({
+        ok: true,
+        data: {
+          filename: args?.filename || 'img_test.png',
+          path: `${args?.targetDir || '/tmp/markdown-cat-test/assets'}/${args?.filename || 'img_test.png'}`,
+        },
+      })
+    }))
+  })
+}
+
+async function resolvePendingSaveImageAsset(page: Page) {
+  await page.evaluate(() => {
+    const resolve = (window as any).__PENDING_SAVE_IMAGE_ASSET__?.resolve
+    if (!resolve) {
+      throw new Error('Pending save_image_asset resolver not found')
+    }
+    resolve()
+  })
+}
+
 async function dispatchClipboardImagePaste(
   page: Page,
   options: {
@@ -239,5 +293,94 @@ test.describe('Story 7.2：剪贴板图片粘贴与同目录本地存储', () =>
       const cmView = (document.querySelector('.source-editor') as any)?.__codemirrorView
       return cmView?.state.doc.toString() ?? ''
     })).toMatch(/^Hello Clipboard text!\[Image\]\(\.\/assets\/img_\d{8}_\d{6}_\d{3}_[0-9a-f]{4}\.png\)$/)
+  })
+
+  test('保存图片期间切换到另一文档时，不应把 Markdown 图片引用插入到新文档', async ({ page }) => {
+    await registerReadExternalDocumentHandler(page)
+    await registerPendingSaveImageAsset(page)
+
+    await dispatchClipboardImagePaste(page, {
+      type: 'image/png',
+      name: 'clipboard.png',
+      bytes: [137, 80, 78, 71],
+    })
+
+    await expect.poll(async () => page.evaluate(() => Boolean((window as any).__PENDING_SAVE_IMAGE_ASSET__?.args))).toBe(true)
+
+    await page.evaluate(async () => {
+      await (window as any).__LOAD_FILE_FROM_PATH__('/docs/other.md')
+    })
+
+    await expect.poll(async () => getEditorMarkdown(page)).toBe('Loaded from other.md')
+
+    await resolvePendingSaveImageAsset(page)
+
+    await expect.poll(async () => getEditorMarkdown(page)).toBe('Loaded from other.md')
+    await expect(page.locator('.status-bar .left')).toHaveText(/^图片已保存至 img_\d{8}_\d{6}_\d{3}_[0-9a-f]{4}\.png，但因文档已切换，未插入 Markdown 引用$/)
+  })
+
+  test('保存成功但 sourceEditorRef 整体不可用时，不应报告插入成功', async ({ page }) => {
+    await registerPendingSaveImageAsset(page)
+
+    await dispatchClipboardImagePaste(page, {
+      type: 'image/png',
+      name: 'clipboard.png',
+      bytes: [137, 80, 78, 71],
+    })
+
+    await expect.poll(async () => page.evaluate(() => Boolean((window as any).__PENDING_SAVE_IMAGE_ASSET__?.args))).toBe(true)
+
+    await page.evaluate(() => {
+      ;(window as any).__SET_SOURCE_EDITOR_REF__(null)
+    })
+
+    await resolvePendingSaveImageAsset(page)
+
+    await expect.poll(async () => getEditorMarkdown(page)).toBe('')
+    await expect(page.locator('.status-bar .left')).toHaveText(/^图片已保存至 img_\d{8}_\d{6}_\d{3}_[0-9a-f]{4}\.png，但编辑器当前不可用，未插入 Markdown 引用$/)
+    await expect(page.locator('.title-bar .status-dot.success')).toHaveCount(0)
+    await expect(page.locator('.title-bar .status-dot.failure')).toHaveCount(1)
+  })
+
+  test('sourceEditorRef 存在但 insertText 返回 false 时，仍不应报告插入成功', async ({ page }) => {
+    await registerPendingSaveImageAsset(page)
+
+    await dispatchClipboardImagePaste(page, {
+      type: 'image/png',
+      name: 'clipboard.png',
+      bytes: [137, 80, 78, 71],
+    })
+
+    await expect.poll(async () => page.evaluate(() => Boolean((window as any).__PENDING_SAVE_IMAGE_ASSET__?.args))).toBe(true)
+
+    await page.evaluate(() => {
+      const w = window as any
+      w.__INSERT_TEXT_FALSE_STUB__ = {
+        insertCalls: 0,
+        releasedTokens: [] as string[],
+      }
+      w.__SET_SOURCE_EDITOR_REF__({
+        insertText: () => {
+          w.__INSERT_TEXT_FALSE_STUB__.insertCalls += 1
+          return false
+        },
+        releasePositionToken: (token?: string) => {
+          if (token !== undefined) {
+            w.__INSERT_TEXT_FALSE_STUB__.releasedTokens.push(token)
+          }
+        },
+      })
+    })
+
+    await resolvePendingSaveImageAsset(page)
+
+    await expect.poll(async () => getEditorMarkdown(page)).toBe('')
+    await expect(page.locator('.status-bar .left')).toHaveText(/^图片已保存至 img_\d{8}_\d{6}_\d{3}_[0-9a-f]{4}\.png，但编辑器当前不可用，未插入 Markdown 引用$/)
+    await expect(page.locator('.title-bar .status-dot.success')).toHaveCount(0)
+    await expect(page.locator('.title-bar .status-dot.failure')).toHaveCount(1)
+    await expect.poll(async () => page.evaluate(() => (window as any).__INSERT_TEXT_FALSE_STUB__)).toMatchObject({
+      insertCalls: 1,
+    })
+    await expect.poll(async () => page.evaluate(() => (window as any).__INSERT_TEXT_FALSE_STUB__.releasedTokens.length)).toBe(1)
   })
 })

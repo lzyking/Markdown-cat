@@ -46,6 +46,7 @@ const filename = ref('New_*.md')
 const content = ref('')
 const cursorPosition = ref<CursorPosition>({ line: 1, column: 1 })
 const sourceEditorRef = ref<any>(null)
+const activeDocumentId = ref(0)
 
 // 可拖动分栏
 const containerRef = ref<HTMLElement | null>(null)
@@ -820,6 +821,7 @@ async function loadFileFromPath(filePath: string) {
   try {
     const res = await invoke<CmdResult<DocumentState>>('read_external_document', { path: filePath })
     if (res.ok && res.data) {
+      activeDocumentId.value += 1
       currentFilePath.value = filePath
       filename.value = res.data.filename
       content.value = res.data.content
@@ -1035,6 +1037,7 @@ async function resolveFallbackImageDirectory(): Promise<string> {
 }
 
 async function handleClipboardImagePaste(payload: ClipboardImagePayload) {
+  const pasteOriginDocumentId = activeDocumentId.value
   try {
     const savedDocumentDir = getParentDirectory(currentFilePath.value)
     const targetDir = savedDocumentDir ?? await resolveFallbackImageDirectory()
@@ -1058,7 +1061,21 @@ async function handleClipboardImagePaste(payload: ClipboardImagePayload) {
     const actualFilename = saveRes.data.filename
     const relativeAssetPath = savedDocumentDir ? `./${actualFilename}` : `./assets/${actualFilename}`
 
-    sourceEditorRef.value?.insertText(`![Image](${relativeAssetPath})`, undefined, false, payload.positionToken)
+    if (activeDocumentId.value !== pasteOriginDocumentId) {
+      sourceEditorRef.value?.releasePositionToken(payload.positionToken)
+      saveStatus.value = 'failure'
+      saveMessage.value = `图片已保存至 ${actualFilename}，但因文档已切换，未插入 Markdown 引用`
+      return
+    }
+
+    const inserted = sourceEditorRef.value?.insertText(`![Image](${relativeAssetPath})`, undefined, false, payload.positionToken) ?? false
+    if (!inserted) {
+      sourceEditorRef.value?.releasePositionToken(payload.positionToken)
+      saveStatus.value = 'failure'
+      saveMessage.value = `图片已保存至 ${actualFilename}，但编辑器当前不可用，未插入 Markdown 引用`
+      return
+    }
+
     saveStatus.value = 'success'
     saveMessage.value = savedDocumentDir
       ? `图片已保存至 ${actualFilename}`
@@ -1085,6 +1102,7 @@ async function onFileDrop(e: DragEvent) {
     await loadFileFromPath(filePath)
   } else {
     const text = await file.text()
+    activeDocumentId.value += 1
     filename.value = file.name
     content.value = text
     saveStatus.value = 'success'
@@ -1331,6 +1349,7 @@ onMounted(async () => {
           path: configRes.data.lastOpenedFile,
         })
         if (loadRes.ok && loadRes.data) {
+          activeDocumentId.value += 1
           currentFilePath.value = configRes.data.lastOpenedFile
           filename.value = loadRes.data.filename
           content.value = loadRes.data.content
@@ -1344,6 +1363,7 @@ onMounted(async () => {
     if (!lastFileLoaded) {
       const result = await invoke<CmdResult<DocumentState>>('get_blank_document')
       if (result.ok && result.data) {
+        activeDocumentId.value += 1
         filename.value = result.data.filename
         content.value = result.data.content
       } else if (result.error) {
@@ -1406,6 +1426,12 @@ if ((window as any).__TAURI_MOCK__) {
   }
   ;(window as any).__SET_THEME__ = async (themeId: string) => {
     await handleThemeSelect(getResolvedThemeId(themeId))
+  }
+  ;(window as any).__LOAD_FILE_FROM_PATH__ = async (filePath: string) => {
+    await loadFileFromPath(filePath)
+  }
+  ;(window as any).__SET_SOURCE_EDITOR_REF__ = (nextSourceEditorRef: any) => {
+    sourceEditorRef.value = nextSourceEditorRef
   }
 }
 </script>

@@ -82,7 +82,7 @@ export interface AssetMigrationResult {
 export interface ClipboardImagePayload {
   mimeType: 'image/png' | 'image/jpeg'
   bytes: string
-  positionToken?: number
+  positionToken?: string
 }
 
 export interface ReadImageAssetResult {

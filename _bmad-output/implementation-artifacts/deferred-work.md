@@ -525,7 +525,8 @@ status: open
 origin: migrated from legacy ledger ("review of spec-dw-47-49-55-clipboard-paste-editor-robustness.md"), 2026-08-02
 location: src/App.vue (handleClipboardImagePaste)
 reason: `handleClipboardImagePaste` resolves the pending `save_image_asset` invocation and calls `sourceEditorRef.value?.insertText(...)` against whatever document is currently open, so if the user switches to a different file before the async save completes, the image markdown reference is inserted into the wrong (newly opened) document instead of the one the paste originated from. This asynchronous save-then-insert race predates this story and is not touched by its changes; independently re-surfaced twice by different review passes over the same spec.
-status: open
+status: done 2026-08-03
+resolution: resolved by sweep bundle dw-clipboard-paste-document-identity-guard
 seen-again: review of spec-dw-47-49-55-clipboard-paste-editor-robustness.md (re-confirmed still unresolved by a second reviewer)
 
 ### DW-74: positionTokenSeq/trackedPastePositions in SourceEditor.vue not namespaced by document/editor-instance identity
@@ -533,14 +534,16 @@ seen-again: review of spec-dw-47-49-55-clipboard-paste-editor-robustness.md (re-
 origin: migrated from legacy ledger ("review of spec-dw-47-49-55-clipboard-paste-editor-robustness.md"), 2026-08-02
 location: src/components/SourceEditor.vue
 reason: `positionTokenSeq`/`trackedPastePositions` are scoped per component instance with no namespacing by document or editor-instance identity, so if the editor is unmounted and remounted (or the document context otherwise resets) while a paste's async `save_image_asset` call is still pending, the stale token number could coincide with a freshly issued token in the new instance and cause the pending insert to target an unrelated position. New mechanism introduced by this story (position-token tracking), a plausible but narrow lifecycle edge case not exercised by any current test.
-status: open
+status: done 2026-08-03
+resolution: resolved by sweep bundle dw-clipboard-paste-document-identity-guard
 
 ### DW-75: handleClipboardImagePaste reports save success without checking sourceEditorRef availability
 
 origin: migrated from legacy ledger ("review of spec-dw-47-49-55-clipboard-paste-editor-robustness.md"), 2026-08-02
 location: src/App.vue (handleClipboardImagePaste)
 reason: The success branch sets `saveStatus.value = 'success'` and a success message unconditionally after `sourceEditorRef.value?.insertText(...)`, without checking whether `sourceEditorRef.value` was actually available/truthy, so if the editor ref is unavailable at resolve time the file is still written to disk but no Markdown reference is inserted while the UI still reports success. This optional-chaining-without-verification pattern predates this story and is not a new regression.
-status: open
+status: done 2026-08-03
+resolution: resolved by sweep bundle dw-clipboard-paste-document-identity-guard
 
 - source_spec: `spec-dw-50-restore-current-file-path.md`
   summary: Failed last-opened-file restore during `onMounted` does not clear `lastOpenedFile` from config, so the app retries loading the same broken path on every subsequent launch.
