@@ -545,35 +545,51 @@ reason: The success branch sets `saveStatus.value = 'success'` and a success mes
 status: done 2026-08-03
 resolution: resolved by sweep bundle dw-clipboard-paste-document-identity-guard
 
-- source_spec: `spec-dw-50-restore-current-file-path.md`
-  summary: Failed last-opened-file restore during `onMounted` does not clear `lastOpenedFile` from config, so the app retries loading the same broken path on every subsequent launch.
-  evidence: `src/App.vue` onMounted only sets `saveStatus`/`saveMessage`/`filename`/`content` when `loadRes.ok && loadRes.data`; when `read_external_document` returns `{ ok: false }`, the code falls through to `get_blank_document` but never calls a config update to clear `lastOpenedFile`, so the stale path persists and is retried on every future launch.
+### DW-76: Failed last-opened-file restore during `onMounted` does not clear `lastOpenedFile` from config, so the app retries loading the same broken path on every subsequent launch.
 
-- source_spec: `spec-dw-50-restore-current-file-path.md`
-  summary: If `read_external_document` throws during the `onMounted` last-opened-file restore (rather than resolving with `{ ok: false }`), the surrounding `try` aborts the rest of `onMounted`, skipping the blank-document fallback, `currentSavePath` fallback, and `resetWidths()`/resize-listener setup.
-  evidence: `src/App.vue` onMounted wraps the entire startup sequence (config load, restore, blank-document fallback, save-path fallback, `resetWidths()`) in one `try/catch`; an exception thrown by the `invoke('read_external_document', ...)` call inside the restore branch (not just a rejected/`ok:false` result) propagates to the outer `catch`, short-circuiting all subsequent startup steps.
+origin: migrated from legacy ledger ("spec-dw-50-restore-current-file-path.md"), 2026-08-03
+location: src/App.vue (onMounted)
+reason: When `read_external_document` returns `{ ok: false }` during last-opened-file restore, onMounted falls through to `get_blank_document` but never updates config to clear `lastOpenedFile`, so the stale broken path persists and is retried on every subsequent launch.
+status: open
 
-- source_spec: `spec-dw-50-restore-current-file-path.md`
-  summary: No regression test exists for "restore last-opened file, then paste image / save / export", even though `documentBaseDir` (which now correctly resolves from the restored `currentFilePath`) drives paste-image save location, autosave/save-as target resolution, and HTML/PDF/Confluence export asset resolution.
-  evidence: `src/App.vue` `documentBaseDir` computed property depends on `currentFilePath.value`; there is no existing unit or e2e test (checked `src/lib/*.test.ts` and `e2e/*.spec.ts`) covering the last-opened-file restore path combined with any of these downstream consumers, so a future refactor could silently regress this fix.
+### DW-77: If `read_external_document` throws during the `onMounted` last-opened-file restore, the surrounding `try` aborts the rest of `onMounted`, skipping fallback and setup steps.
 
-- source_spec: `spec-dw-50-restore-current-file-path.md`
-  summary: Narrow startup race — if a user opens a different document via the file-open dialog while the `onMounted` last-opened-file restore's `read_external_document` await is still pending, the restore's resolved `filename`/`content`/`currentFilePath` values can overwrite the user's newly opened document with stale restored data.
-  evidence: The restore branch in `onMounted` has no guard comparing `currentFilePath.value` (or an in-flight token) before assigning `filename.value`/`content.value`/`currentFilePath.value` after the await resolves; this pre-existing pattern (the `filename`/`content` assignments already had this race before this fix) is a narrow window limited to early app startup before this async call resolves.
+origin: migrated from legacy ledger ("spec-dw-50-restore-current-file-path.md"), 2026-08-03
+location: src/App.vue (onMounted)
+reason: If `read_external_document` throws (rather than resolving with `{ ok: false }`) during the last-opened-file restore, the surrounding try/catch aborts the rest of onMounted, skipping the blank-document fallback, `currentSavePath` fallback, and `resetWidths()`/resize-listener setup.
+status: open
 
-- source_spec: `spec-save-as-asset-migration-hardening.md`
-  summary: `extractSiblingImageReferences`/`replaceSiblingImageReferenceFilename` still only recognize plain inline `![alt](./filename)` sibling-image links, unlike the newly widened `extractAssetReferences`, which now also covers HTML `<img>`, reference-style, and titled-link forms for the `assets/` case.
-  evidence: `src/lib/image-assets.ts`'s `extractSiblingImageReferences` regex (`/!\[[^\]]*\]\(\.\/([^)\s/\\]+)\)/g`) was not touched by this story's diff — confirmed via `git diff 4870d431586447f7abe860a0d9aa9fdeaa3789b0 HEAD -- src/lib/image-assets.ts`, which shows no changes to that function — so a sibling image referenced via `<img>`, reference-style, or a titled link still loses its migration/rename coverage after "Save As" moves an already-saved document, even though the equivalent `assets/`-relative form is now handled.
-  evidence: Independently raised by two review passes (a prior pass on this same spec, and this pass's Blind Hunter/Edge Case Hunter agents both flagging the related percent-encoding gap in the sibling path), which increases confidence this is a real, reproducible gap rather than noise.
+### DW-78: No regression test exists for "restore last-opened file, then paste image / save / export"
 
-- source_spec: `spec-save-as-asset-migration-hardening.md`
-  summary: `extractAssetReferences` treats a query-string/fragment suffix (e.g. `./assets/pic.png?raw=1` or `./assets/pic.png#frag`) as part of the literal filename, so migration looks for a file named `pic.png?raw=1` on disk, never finds it, and silently reports the reference as skipped/failed instead of migrating the real underlying file.
-  evidence: The capturing group in all three `extractAssetReferences` patterns (`([^)\s]+?)`, `([^\s]+)`, `([^"]+)`/`([^']+)`/`([^\s"'=<>`]+)`) has no special handling for `?`/`#`, and this behavior is unchanged from the pre-existing pattern before this story (`/!\[[^\]]*\]\(\.\/assets\/([^)\s]+)\)/g` had the same unbounded capture) — confirmed via `git diff 4870d431586447f7abe860a0d9aa9fdeaa3789b0 HEAD -- src/lib/image-assets.ts`, which shows the character-class semantics for the base filename capture were preserved, only the surrounding alternation/anchors were extended. Pre-existing gap surfaced incidentally by this story's expanded test/review attention on `extractAssetReferences`.
+origin: migrated from legacy ledger ("spec-dw-50-restore-current-file-path.md"), 2026-08-03
+location: src/App.vue (documentBaseDir / onMounted restore path)
+reason: No regression test covers "restore last-opened file, then paste image / save / export", even though `documentBaseDir` (which resolves from the restored `currentFilePath`) drives paste-image save location, autosave/save-as target resolution, and HTML/PDF/Confluence export asset resolution; a future refactor could silently regress this.
+status: open
 
-- source_spec: `spec-save-as-asset-migration-hardening.md`
-  summary: `extractAssetReferences` matches image references inside fenced code blocks (e.g. a documentation snippet showing `<img src="./assets/demo.png">`), so a purely illustrative/example reference is treated as a real asset dependency and triggers a spurious "not migrated" warning or unnecessary migration attempt during Save As.
-  evidence: `extractAssetReferences` (src/lib/image-assets.ts) runs its three regex patterns directly against the raw `markdown` string with no fenced-code-block exclusion; confirmed no fence-stripping logic exists anywhere in the function. This is not a new regression — the original single pattern before this story already matched inside fenced code the same way — but this story's added HTML `<img>` pattern widens the surface area (HTML snippets in code fences are a common documentation idiom), making the pre-existing gap more likely to trigger in practice.
+### DW-79: Narrow startup race — opening a different document while last-opened-file restore is still pending can overwrite it with stale restored data
 
-- source_spec: `spec-save-as-asset-migration-hardening.md`
-  summary: `extractSiblingImageReferences`/`replaceSiblingImageReferenceFilename` still only recognize plain inline `![alt](./filename)` sibling-image links and were not extended to the HTML `<img>`, reference-style, or titled-link forms this story added to `extractAssetReferences`, so a sibling image referenced via any of those richer syntaxes loses migration/rename coverage after "Save As" relocates an already-saved document.
-  evidence: Confirmed via `git diff 4870d431586447f7abe860a0d9aa9fdeaa3789b0 HEAD -- src/lib/image-assets.ts` that `extractSiblingImageReferences`'s regex (`/!\[[^\]]*\]\(\.\/([^)\s/\\]+)\)/g`) is unchanged by this story. Independently re-surfaced by this pass's Edge Case Hunter agent in addition to a prior review pass on the same spec, increasing confidence this is a real, reproducible gap.
+origin: migrated from legacy ledger ("spec-dw-50-restore-current-file-path.md"), 2026-08-03
+location: src/App.vue (onMounted)
+reason: If a user opens a different document via the file-open dialog while the last-opened-file restore's `read_external_document` await is still pending, the restore's resolved `filename`/`content`/`currentFilePath` values can overwrite the user's newly opened document with stale restored data once the await resolves.
+status: open
+
+### DW-80: extractSiblingImageReferences/replaceSiblingImageReferenceFilename were never extended to the HTML `<img>`, reference-style, or titled-link forms extractAssetReferences now covers
+
+origin: migrated from legacy ledger ("spec-save-as-asset-migration-hardening.md"), 2026-08-03
+location: src/lib/image-assets.ts (extractSiblingImageReferences / replaceSiblingImageReferenceFilename)
+reason: extractSiblingImageReferences/replaceSiblingImageReferenceFilename still only recognize plain inline `![alt](./filename)` sibling-image links and were never extended to the HTML `<img>`, reference-style, or titled-link forms that extractAssetReferences now covers, so a sibling image referenced via any of those richer syntaxes loses migration/rename coverage after "Save As" relocates an already-saved document.
+status: open
+
+### DW-81: extractAssetReferences treats a query-string/fragment suffix as part of the literal asset filename, so migration silently fails to find the real file
+
+origin: migrated from legacy ledger ("spec-save-as-asset-migration-hardening.md"), 2026-08-03
+location: src/lib/image-assets.ts (extractAssetReferences)
+reason: extractAssetReferences treats a query-string/fragment suffix (e.g. `./assets/pic.png?raw=1` or `./assets/pic.png#frag`) as part of the literal filename, so migration looks for a file named `pic.png?raw=1` on disk, never finds it, and silently reports the reference as skipped/failed instead of migrating the real underlying file.
+status: open
+
+### DW-82: extractAssetReferences matches image references inside fenced code blocks, treating illustrative examples as real asset dependencies
+
+origin: migrated from legacy ledger ("spec-save-as-asset-migration-hardening.md"), 2026-08-03
+location: src/lib/image-assets.ts (extractAssetReferences)
+reason: extractAssetReferences matches image references inside fenced code blocks (e.g. a documentation snippet showing `<img src="./assets/demo.png">`), so a purely illustrative/example reference is treated as a real asset dependency and triggers a spurious "not migrated" warning or unnecessary migration attempt during Save As.
+status: open
