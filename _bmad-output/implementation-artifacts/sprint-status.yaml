@@ -100,7 +100,7 @@ development_status:
   11-3-confluence-accessibility-and-integration-tests: done
   epic-11-retrospective: optional
   epic-12: backlog
-  12-1-session-startup-restore-fault-tolerance: backlog
+  12-1-session-startup-restore-fault-tolerance: done
   12-2-markdown-asset-parser-edge-cases: backlog
   12-3-session-restore-and-asset-regression-tests: backlog
   epic-12-retrospective: optional

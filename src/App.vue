@@ -14,6 +14,11 @@ import SlashMenu, { type SlashMenuItem } from './components/SlashMenu.vue'
 import type { CursorPosition } from './components/SourceEditor.vue'
 import { applyTheme, getActiveThemeId } from './lib/theme'
 import { resolveThemeSelectionOutcome, type ThemeSelectOutcome } from './lib/theme-select'
+import {
+  isLatestOpenRequest,
+  resolveStartupRestoreOutcome,
+  shouldSkipBlankDocumentFallback,
+} from './lib/session-restore'
 import { renderMarkdown } from './lib/markdown'
 import { getResolvedThemeId } from './lib/themes'
 import { exportSelfContainedHtml, isHtmlExportCancelledError, type ExportImageWarning } from './lib/export-html'
@@ -47,6 +52,7 @@ const content = ref('')
 const cursorPosition = ref<CursorPosition>({ line: 1, column: 1 })
 const sourceEditorRef = ref<any>(null)
 const activeDocumentId = ref(0)
+const openRequestToken = ref(0)
 
 // 可拖动分栏
 const containerRef = ref<HTMLElement | null>(null)
@@ -819,7 +825,12 @@ async function handleThemeSelect(themeId: string) {
 
 async function loadFileFromPath(filePath: string) {
   try {
+    const requestToken = ++openRequestToken.value
     const res = await invoke<CmdResult<DocumentState>>('read_external_document', { path: filePath })
+    if (!isLatestOpenRequest(requestToken, openRequestToken.value)) {
+      return
+    }
+
     if (res.ok && res.data) {
       activeDocumentId.value += 1
       currentFilePath.value = filePath
@@ -1345,17 +1356,39 @@ onMounted(async () => {
         currentSavePath.value = configRes.data.savePath
       }
       if (configRes.data.lastOpenedFile && !(window as any).__TAURI_MOCK__) {
-        const loadRes = await invoke<CmdResult<DocumentState>>('read_external_document', {
-          path: configRes.data.lastOpenedFile,
-        })
-        if (loadRes.ok && loadRes.data) {
+        const requestToken = ++openRequestToken.value
+        let loadRes: CmdResult<DocumentState> | null = null
+
+        try {
+          loadRes = await invoke<CmdResult<DocumentState>>('read_external_document', {
+            path: configRes.data.lastOpenedFile,
+          })
+        } catch (error) {
+          console.error('Failed to restore last opened file:', error)
+        }
+
+        const outcome = resolveStartupRestoreOutcome(loadRes)
+        const isRestoreStillLatest = isLatestOpenRequest(requestToken, openRequestToken.value)
+
+        if (outcome.applied && isRestoreStillLatest) {
           activeDocumentId.value += 1
           currentFilePath.value = configRes.data.lastOpenedFile
-          filename.value = loadRes.data.filename
-          content.value = loadRes.data.content
+          filename.value = outcome.filename
+          content.value = outcome.content
           saveStatus.value = 'success'
-          saveMessage.value = `已自动恢复上次编辑文件：${loadRes.data.filename}`
+          saveMessage.value = outcome.message
+        }
+
+        if (shouldSkipBlankDocumentFallback(outcome, isRestoreStillLatest, activeDocumentId.value > 0)) {
           lastFileLoaded = true
+        }
+
+        if (outcome.shouldClearStaleConfig && isRestoreStillLatest) {
+          try {
+            await invoke('update_last_opened_file', { filePath: null })
+          } catch (error) {
+            console.warn('Failed to clear stale last opened file config:', error)
+          }
         }
       }
     }
