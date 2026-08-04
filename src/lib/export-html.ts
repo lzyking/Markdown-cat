@@ -69,6 +69,13 @@ function isAbsoluteFilesystemPath(path: string): boolean {
   return path.startsWith('/') || path.startsWith('\\') || WINDOWS_ABSOLUTE_PATH_PATTERN.test(path)
 }
 
+function pathToUrl(path: string): string {
+  if (path.startsWith('file://')) return path
+  const normalized = path.replace(/\\/g, '/')
+  return normalized.startsWith('/') ? `file://${normalized}` : `file:///${normalized}`
+}
+
+
 function bytesToBase64(bytes: Uint8Array): string {
   let binary = ''
   const chunkSize = 0x8000
@@ -273,12 +280,23 @@ export async function exportSelfContainedHtml(
           const localImage = await options.readLocalImage(absolutePath, LOCAL_IMAGE_EMBED_LIMIT_BYTES)
           if (localImage.dataBase64) {
             image.setAttribute('src', `data:${localImage.mimeType};base64,${localImage.dataBase64}`)
-          } else if (localImage.skippedLarge) {
-            warnings.push({
-              kind: 'local-too-large',
-              src: originalSource,
-              message: `图片超过 10MB，已跳过内嵌：${originalSource}`,
-            })
+          } else {
+            // DW-17 FIX: Rewrite unembeddable local image src to an absolute file:// URL derived from absolutePath
+            // so the reference resolves correctly regardless of where the exported HTML or PDF temp file is located.
+            image.setAttribute('src', pathToUrl(absolutePath))
+            if (localImage.skippedLarge) {
+              warnings.push({
+                kind: 'local-too-large',
+                src: originalSource,
+                message: `图片超过 10MB，已跳过内嵌：${originalSource}`,
+              })
+            } else {
+              warnings.push({
+                kind: 'local-read-failed',
+                src: originalSource,
+                message: `无法读取本地图片：${originalSource}`,
+              })
+            }
           }
         }
       } else {

@@ -72,4 +72,51 @@ test.describe('Story 8.1：导出自包含 HTML', () => {
       maxInlineSizeBytes: 10 * 1024 * 1024,
     })
   })
+
+  test('DW-17: 当本地图片超过 10MB 跳过内嵌时，应将其 src 改写为绝对 file:// URL', async ({ page }) => {
+    await page.evaluate(() => {
+      const w = window as any
+      w.__TAURI_MOCK_SAVE_DIALOG_RESULT__ = '/tmp/markdown-cat-test/exported_large.html'
+      w.__TAURI_MOCK__.__registerHandler('read_image_asset', (args: any) => {
+        if (args?.path !== '/tmp/markdown-cat-test/assets/large.png') {
+          throw new Error(`Unexpected image path: ${args?.path}`)
+        }
+        return {
+          ok: true,
+          data: {
+            mimeType: 'image/png',
+            sizeBytes: 15 * 1024 * 1024,
+            dataBase64: null,
+            skippedLarge: true,
+          },
+        }
+      })
+    })
+
+    await page.locator('.source-editor .cm-content').fill('# Export Large\n\n![Large](./assets/large.png)')
+
+    const fileMenu = page.locator('.menu-bar .menu-item', { hasText: '文件' })
+    await fileMenu.hover()
+    await page.locator('.menu-dropdown .menu-row', { hasText: '导出为 HTML (Export as HTML)…' }).click()
+
+    await expect.poll(async () => page.evaluate(() => {
+      const invocations = (window as any).__TAURI_MOCK__.invocations as Array<any>
+      const exportCalls = invocations.filter(
+        (entry) => entry.command === 'save_document_as' && entry.args?.targetPath === '/tmp/markdown-cat-test/exported_large.html',
+      )
+      return exportCalls.length > 0 ? exportCalls[exportCalls.length - 1].args.content : null
+    })).not.toBeNull()
+
+    const exportHtml = await page.evaluate(() => {
+      const invocations = (window as any).__TAURI_MOCK__.invocations as Array<any>
+      const exportCalls = invocations.filter(
+        (entry) => entry.command === 'save_document_as' && entry.args?.targetPath === '/tmp/markdown-cat-test/exported_large.html',
+      )
+      return exportCalls.length > 0 ? exportCalls[exportCalls.length - 1].args.content : ''
+    }) as string
+
+    expect(exportHtml).toContain('src="file:///tmp/markdown-cat-test/assets/large.png"')
+    expect(exportHtml).not.toContain('./assets/large.png')
+  })
 })
+

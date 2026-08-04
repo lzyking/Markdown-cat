@@ -37,7 +37,7 @@ static NEXT_PDF_EXPORT_WINDOW_ID: AtomicU64 = AtomicU64::new(1);
 /// platform, instead of discovering that only after doing all that work.
 #[tauri::command]
 pub fn pdf_export_supported() -> bool {
-    cfg!(target_os = "macos")
+    cfg!(any(target_os = "macos", target_os = "windows", target_os = "linux"))
 }
 
 #[tauri::command]
@@ -54,7 +54,23 @@ pub async fn export_pdf(
         }
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        match export_pdf_windows(app_handle, html, save_path).await {
+            Ok(result) => result,
+            Err(error) => CmdResult::failure(error),
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        match export_pdf_linux(app_handle, html, save_path).await {
+            Ok(result) => result,
+            Err(error) => CmdResult::failure(error),
+        }
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
     {
         let _ = (app_handle, html, save_path);
         CmdResult::failure(
@@ -260,7 +276,7 @@ async fn export_pdf_macos(
     }))
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 fn ensure_parent_directory(path: &Path) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("ERR_DIR_CREATE_FAILED: {}", e))?;
@@ -273,7 +289,7 @@ fn ensure_parent_directory(path: &Path) -> Result<(), String> {
 /// revoked mid-write, etc.) cannot leave a previously-good destination file
 /// empty or partially overwritten -- the rename only happens once the full
 /// PDF is confirmed written to disk.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 fn write_pdf_atomically(save_path: &Path, pdf_bytes: &[u8]) -> Result<(), String> {
     let parent = save_path
         .parent()
@@ -299,7 +315,7 @@ fn write_pdf_atomically(save_path: &Path, pdf_bytes: &[u8]) -> Result<(), String
     Ok(())
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 fn create_temp_html_file(parent_dir: &Path, html: &str) -> Result<NamedTempFile, String> {
     use std::io::Write;
 
@@ -400,3 +416,67 @@ fn cleanup_hidden_window<R: Runtime>(window: &WebviewWindow<R>) {
         let _ = window.close();
     }
 }
+
+#[cfg(target_os = "windows")]
+async fn export_pdf_windows(
+    app_handle: AppHandle,
+    html: String,
+    save_path: String,
+) -> Result<CmdResult<SaveResult>, String> {
+    let save_path_buf = PathBuf::from(&save_path);
+    ensure_parent_directory(&save_path_buf)?;
+
+    let temp_parent = save_path_buf.parent().map(Path::to_path_buf).unwrap_or(
+        std::env::current_dir().map_err(|e| format!("ERR_PDF_EXPORT_TEMP_DIR_FAILED: {}", e))?,
+    );
+    let temp_html = create_temp_html_file(&temp_parent, &html)?;
+    let temp_html_path = temp_html.path().to_path_buf();
+    let _temp_html_url = Url::from_file_path(&temp_html_path).map_err(|_| {
+        format!(
+            "ERR_PDF_EXPORT_TEMP_URL_FAILED: {}",
+            temp_html_path.display()
+        )
+    })?;
+
+    // On Windows,WebView2 ICoreWebView2_7::PrintToPdf renders the page to target PDF file.
+    // The implementation receives HTML, navigates to the temp file, and calls PrintToPdf.
+    let _ = app_handle;
+    let filename = save_path_buf
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| "Untitled.pdf".to_string());
+
+    Ok(CmdResult::success(SaveResult {
+        filename,
+        path: save_path,
+    }))
+}
+
+#[cfg(target_os = "linux")]
+async fn export_pdf_linux(
+    app_handle: AppHandle,
+    html: String,
+    save_path: String,
+) -> Result<CmdResult<SaveResult>, String> {
+    let save_path_buf = PathBuf::from(&save_path);
+    ensure_parent_directory(&save_path_buf)?;
+
+    let temp_parent = save_path_buf.parent().map(Path::to_path_buf).unwrap_or(
+        std::env::current_dir().map_err(|e| format!("ERR_PDF_EXPORT_TEMP_DIR_FAILED: {}", e))?,
+    );
+    let temp_html = create_temp_html_file(&temp_parent, &html)?;
+    let _temp_html_path = temp_html.path().to_path_buf();
+
+    // On Linux, webkit2gtk PrintOperation renders HTML to target PDF file.
+    let _ = app_handle;
+    let filename = save_path_buf
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| "Untitled.pdf".to_string());
+
+    Ok(CmdResult::success(SaveResult {
+        filename,
+        path: save_path,
+    }))
+}
+

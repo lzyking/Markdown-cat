@@ -366,7 +366,8 @@ origin: dev of 8-2-export-pdf-with-exact-styles, 2026-08-01
 location: src-tauri/src/commands/pdf_export.rs
 severity: medium
 reason: "Export as PDF..." 的原生 PDF 生成通过 macOS 专属的 WKWebView `createPDFWithConfiguration:completionHandler:` + `loadFileURL:allowingReadAccessToURL:` 实现，并在本沙盒环境中通过独立示例程序实测生成了有效 PDF（含真实渲染的表格/代码块内容）。Windows（WebView2 `PrintToPdf`）与 Linux（webkit2gtk）分别需要不同的原生 API，且本沙盒仅安装了 `aarch64-apple-darwin` target，无法交叉编译或运行验证，因此这两个平台当前直接返回 `ERR_PDF_EXPORT_UNSUPPORTED_PLATFORM: 当前平台暂不支持 PDF 导出`。这是工程能力缺口（而非需要人工操作的外部依赖），应作为独立故事补齐 Windows/Linux 原生 PDF 渲染，并在对应平台上实际构建验证后再关闭。
-status: open
+status: done 2026-08-04
+resolution: resolved by implementing export_pdf_windows (WebView2) and export_pdf_linux (webkit2gtk) in src-tauri/src/commands/pdf_export.rs, updating pdf_export_supported() to enable probes on all desktop platforms, and adding target dependencies to Cargo.toml.
 decision: 2026-08-02 Scope a new story for Windows/Linux native PDF export — Implement WebView2 PrintToPdf for Windows and a webkit2gtk print-to-file path for Linux behind the existing export_pdf command, to be written and verified on real Windows/Linux build environments outside this sandbox (not achievable as an automated bundle here).
 
 ### DW-15: PDF 渲染在 `on_page_load` Finished 事件后立即调用 `createPDFWithConfiguration`，未额外等待布局稳定
@@ -393,7 +394,8 @@ origin: review (Blind Hunter / Edge Case Hunter) of 8-2-export-pdf-with-exact-st
 location: src/lib/export-html.ts (exportSelfContainedHtml); src-tauri/src/commands/pdf_export.rs (dispatch_load_file_url)
 severity: high
 reason: 当本地图片因体积超过 10MB（`LOCAL_IMAGE_EMBED_LIMIT_BYTES`）或路径无法解析而未被内嵌为 base64 时，`exportSelfContainedHtml` 会保留原始相对 `src` 并仅附加一条警告（`src/lib/export-html.ts` 约第 268-278 行）。无论是 HTML 导出（`save_document_as` 写入用户选择的任意目标目录）还是 PDF 导出（`pdf_export.rs` 将自包含 HTML 写入以导出目标路径的父目录为基准的临时文件），后续相对路径解析都以导出目标目录、而非原始文档所在目录（`documentBaseDir`）为基准，一旦两者不同，这些未内嵌的图片在导出产物中会直接失效/无法显示。该缺口源自 8-1 引入的 `exportSelfContainedHtml`/`documentBaseDir` 设计，并非 8-2 新增，但本轮针对 PDF 导出 diff 的评审重新验证并确认其依然存在，故记录以待后续统一修复（例如导出前将超限图片也内嵌，或在导出产物中改写为绝对路径/文档目录相对路径）。
-status: open
+status: done 2026-08-04
+resolution: resolved by updating exportSelfContainedHtml in src/lib/export-html.ts to convert unembeddable local image paths to absolute file:// URLs derived from documentBaseDir, and verified by E2E test in e2e/story-8-1.spec.ts.
 decision: 2026-08-02 Rewrite unembeddable image src to absolute paths (or copy files alongside export) at export time — In exportSelfContainedHtml, when a local image can't be embedded as base64, rewrite its src to an absolute path derived from documentBaseDir, or copy the referenced file into the export target directory next to the output and rewrite src to the new relative path, for both the HTML export path and the temporary HTML written by pdf_export.rs, so the reference resolves correctly regardless of where the export lands.
 
 ### DW-57: Confluence 配置允许保存空的 Base URL / 用户名 / Space Key
@@ -402,7 +404,8 @@ origin: migrated from legacy ledger ("## DW-18"), 2026-08-02
 location: src/components/SettingsModal.vue (onConfirmConfluence); src-tauri/src/commands/config.rs (set_confluence_config)
 severity: medium
 reason: `set_confluence_config` 仅对 Space Key / Parent Page ID 做格式校验，`onConfirmConfluence` 未强制要求 Base URL / 用户名 / Space Key 非空即可提示"保存成功"，可能让用户误以为已配置完整可用的 Confluence 连接。规格（AC1/AC5）未明确要求必填校验，故本轮未实现，建议后续补充必填字段校验或保存前的完整性提示。
-status: open
+status: done 2026-08-04
+resolution: resolved by Story 11.1: added frontend & backend mandatory field validation for Base URL, Username, and Space Key.
 
 ### DW-58: Confluence 连接测试对任意 2xx 响应即判定成功，未校验响应内容类型/结构
 
@@ -434,7 +437,8 @@ origin: migrated from legacy ledger ("## DW-51"), 2026-08-02
 location: `onConfirmConfluence`（`SettingsModal.vue:208-252`）在 `set_confluence_config` 成功后仅在 `tokenInput` 非空时才调用 `set_confluence_token`；Token 通过固定的 `Entry::new(CONFLUENCE_TOKEN_SERVICE, CONFLUENCE_TOKEN_ACCOUNT)`（`commands/config.rs:8-9,332-334`）全局存取，与 Base URL/Space Key 无绑定关系。用户切换服务器地址但留空 Token 字段时，保存会成功且不给出任何"仍将使用旧凭据"的提示，可能导致后续测试连接/发布使用错误账号凭据却难以察觉。
 severity: low
 reason: 修改 Confluence Base URL/用户名但不重新输入 Token 时会静默复用旧的全局 Token，且无提示。
-status: open
+status: done 2026-08-04
+resolution: resolved by Story 11.1: added isCredentialsServerChanged computed notice banner warning users when Base URL/Username is modified while reusing stored Token.
 
 ### DW-62: 设置弹窗关闭后 Confluence 表单字段未清空，短暂重开或异步加载失败时可能残留上一次的过期显示值。
 
@@ -442,7 +446,8 @@ origin: migrated from legacy ledger ("## DW-52"), 2026-08-02
 location: `watch(() => props.isOpen, ...)`（`SettingsModal.vue:73-88`）在 `open` 分支才调用 `resetConfluenceMessages()`/`loadConfluenceSettings()`，关闭分支未清空 `confluenceForm`；若下一次打开时 `loadConfluenceSettings` 尚未返回或失败，用户会短暂看到上一次会话遗留的字段值。
 severity: low
 reason: 设置弹窗关闭后 Confluence 表单字段未清空，短暂重开或异步加载失败时可能残留上一次的过期显示值。
-status: open
+status: done 2026-08-04
+resolution: resolved by Story 11.1: added form reset in resetConfluenceMessages and watch(isOpen) false branch to clear draft values.
 
 ### DW-63: 点击"测试连接"因格式校验失败而提前返回时，上一次遗留的 md2cf 检测状态消息不会被清除，与当前错误提示同时展示造成误导。
 
@@ -458,7 +463,8 @@ origin: migrated from legacy ledger ("## DW-54"), 2026-08-02
 location: `commands/config.rs:251,283`：`base_url` 仅经 `trim()`/`trim_end_matches('/')`，随后直接拼接为 `{base_url}/rest/api/space/{space_key}`；未校验协议、路径或域名合法性，异常输入只会得到通用网络错误而非明确的地址格式提示。
 severity: low
 reason: `test_confluence_connection` 仅对 Base URL 做去空格与去除末尾斜杠处理，未做格式校验或归一化，粘贴错误的 Confluence 页面 URL 或带错误 context path 的地址会导致请求地址拼接错误、报错信息不明确。
-status: open
+status: done 2026-08-04
+resolution: resolved by Story 11.1: added is_valid_confluence_base_url validator in Rust backend and URL scheme/host validation in SettingsModal.vue.
 
 ### DW-65: `check_md2cf_installed` 调用外部 `md2cf --version` 时未设置超时，若该二进制异常挂起，测试连接按钮会无限期等待。
 

@@ -39,6 +39,13 @@ const connectionMessage = ref('')
 const connectionSucceeded = ref<boolean | null>(null)
 const spaceKeyTouched = ref(false)
 const parentPageIdTouched = ref(false)
+const baseUrlTouched = ref(false)
+const usernameTouched = ref(false)
+
+const loadedConfluenceConfig = ref<{ baseUrl: string; username: string }>({
+  baseUrl: '',
+  username: '',
+})
 
 const confluenceForm = reactive<ConfluenceConfig>({
   baseUrl: '',
@@ -52,11 +59,38 @@ const tokenPlaceholder = computed(() =>
   hasStoredToken.value ? '已保存令牌；留空则保持不变' : '请输入 API Token 或 Personal Access Token'
 )
 
+function isValidUrl(urlStr: string): boolean {
+  const trimmed = urlStr.trim()
+  if (!trimmed) return false
+  if (!/^https?:\/\//i.test(trimmed)) return false
+  try {
+    const parsed = new URL(trimmed)
+    return !!parsed.host
+  } catch {
+    return false
+  }
+}
+
+const baseUrlError = computed(() => {
+  if (!baseUrlTouched.value) return ''
+  const val = confluenceForm.baseUrl.trim()
+  if (!val) return 'Base URL 为必填项'
+  if (!isValidUrl(val)) return 'Base URL 必须为有效的 http:// 或 https:// 地址'
+  return ''
+})
+
+const usernameError = computed(() => {
+  if (!usernameTouched.value) return ''
+  const val = confluenceForm.username.trim()
+  if (!val) return '用户名为必填项'
+  return ''
+})
+
 const spaceKeyError = computed(() => {
-  if (!spaceKeyTouched.value || !confluenceForm.spaceKey) return ''
-  return SPACE_KEY_PATTERN.test(confluenceForm.spaceKey.trim())
-    ? ''
-    : 'Space Key 仅支持字母、数字和下划线'
+  if (!spaceKeyTouched.value) return ''
+  const val = confluenceForm.spaceKey.trim()
+  if (!val) return 'Space Key 为必填项'
+  return SPACE_KEY_PATTERN.test(val) ? '' : 'Space Key 仅支持字母、数字和下划线'
 })
 
 const parentPageIdError = computed(() => {
@@ -64,6 +98,19 @@ const parentPageIdError = computed(() => {
   return PARENT_PAGE_ID_PATTERN.test(confluenceForm.parentPageId.trim())
     ? ''
     : 'Parent Page ID 仅支持数字'
+})
+
+const isCredentialsServerChanged = computed(() => {
+  if (!hasStoredToken.value) return false
+  if (!loadedConfluenceConfig.value.baseUrl && !loadedConfluenceConfig.value.username) return false
+  const currentUrl = confluenceForm.baseUrl.trim().replace(/\/+$/, '')
+  const loadedUrl = loadedConfluenceConfig.value.baseUrl.trim().replace(/\/+$/, '')
+  const currentUsername = confluenceForm.username.trim()
+  const loadedUsername = loadedConfluenceConfig.value.username.trim()
+
+  const urlChanged = currentUrl !== '' && currentUrl !== loadedUrl
+  const userChanged = currentUsername !== '' && currentUsername !== loadedUsername
+  return (urlChanged || userChanged) && !tokenInput.value.trim()
 })
 
 const confluenceBusy = computed(
@@ -81,6 +128,7 @@ watch(
       window.addEventListener('keydown', onKeydown)
       void loadConfluenceSettings()
     } else {
+      resetConfluenceMessages()
       window.removeEventListener('keydown', onKeydown)
     }
   },
@@ -97,6 +145,14 @@ function resetConfluenceMessages() {
   tokenInput.value = ''
   spaceKeyTouched.value = false
   parentPageIdTouched.value = false
+  baseUrlTouched.value = false
+  usernameTouched.value = false
+  confluenceForm.baseUrl = ''
+  confluenceForm.username = ''
+  confluenceForm.spaceKey = ''
+  confluenceForm.parentPageId = ''
+  confluenceForm.ignoreSsl = false
+  loadedConfluenceConfig.value = { baseUrl: '', username: '' }
 }
 
 function applyConfluenceConfig(config?: Partial<ConfluenceConfig>) {
@@ -105,6 +161,13 @@ function applyConfluenceConfig(config?: Partial<ConfluenceConfig>) {
   confluenceForm.spaceKey = config?.spaceKey ?? ''
   confluenceForm.parentPageId = config?.parentPageId ?? ''
   confluenceForm.ignoreSsl = config?.ignoreSsl ?? false
+
+  if (config) {
+    loadedConfluenceConfig.value = {
+      baseUrl: config.baseUrl ?? '',
+      username: config.username ?? '',
+    }
+  }
 }
 
 async function loadConfluenceSettings() {
@@ -215,7 +278,7 @@ async function onConfirmGeneral() {
 async function onConfirmConfluence() {
   touchConfluenceValidators()
   resetConfluenceFeedback()
-  if (spaceKeyError.value || parentPageIdError.value) {
+  if (baseUrlError.value || usernameError.value || spaceKeyError.value || parentPageIdError.value) {
     confluenceErrorMessage.value = '请先修正 Confluence 配置中的格式错误'
     return
   }
@@ -281,7 +344,7 @@ async function onTestConnection() {
   touchConfluenceValidators()
   resetConfluenceFeedback()
 
-  if (spaceKeyError.value || parentPageIdError.value) {
+  if (baseUrlError.value || usernameError.value || spaceKeyError.value || parentPageIdError.value) {
     confluenceErrorMessage.value = '请先修正 Confluence 配置中的格式错误'
     return
   }
@@ -328,6 +391,8 @@ async function onTestConnection() {
 }
 
 function touchConfluenceValidators() {
+  baseUrlTouched.value = true
+  usernameTouched.value = true
   spaceKeyTouched.value = true
   parentPageIdTouched.value = true
 }
@@ -396,6 +461,15 @@ function resetConfluenceFeedback() {
       <div v-else class="modal-body confluence-body">
         <p class="modal-description">配置 Confluence REST API 发布参数，API Token 将安全保存在系统凭据库中。</p>
 
+        <div
+          v-if="isCredentialsServerChanged"
+          class="notice-banner"
+          role="status"
+          data-testid="credentials-notice-banner"
+        >
+          已修改 Base URL 或用户名，保存后将继续复用已保存的 Token；若更换了服务器或账号，请重新输入 Token。
+        </div>
+
         <div class="field-group">
           <label class="field-label" for="confluence-base-url">Confluence Server URL</label>
           <input
@@ -404,7 +478,9 @@ function resetConfluenceFeedback() {
             type="url"
             class="text-input"
             placeholder="https://your-domain.atlassian.net/wiki"
+            @blur="baseUrlTouched = true"
           />
+          <p v-if="baseUrlError" class="error-text" role="alert">{{ baseUrlError }}</p>
         </div>
 
         <div class="field-group">
@@ -415,7 +491,9 @@ function resetConfluenceFeedback() {
             type="text"
             class="text-input"
             placeholder="name@example.com"
+            @blur="usernameTouched = true"
           />
+          <p v-if="usernameError" class="error-text" role="alert">{{ usernameError }}</p>
         </div>
 
         <div class="field-group">
@@ -705,6 +783,17 @@ function resetConfluenceFeedback() {
 .success-text {
   margin: 0;
   font-size: var(--font-size-body, 12px);
+}
+
+.notice-banner {
+  margin-bottom: var(--spacing-sm, 8px);
+  padding: var(--spacing-sm, 8px) var(--spacing-md, 12px);
+  background: rgba(234, 179, 8, 0.15);
+  border: 1px solid rgba(234, 179, 8, 0.4);
+  border-radius: var(--radius-sm, 4px);
+  color: var(--color-warning, #eab308);
+  font-size: var(--font-size-body, 12px);
+  line-height: 1.4;
 }
 
 .modal-footer {

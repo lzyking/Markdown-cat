@@ -135,7 +135,13 @@ pub fn set_confluence_config(
     confluence: ConfluenceConfig,
 ) -> CmdResult<()> {
     let trimmed = normalize_confluence_config(confluence);
-    if !trimmed.space_key.is_empty() && !config::is_valid_confluence_space_key(&trimmed.space_key) {
+    if trimmed.base_url.is_empty() || trimmed.username.is_empty() || trimmed.space_key.is_empty() {
+        return CmdResult::failure(config::ERR_CONFLUENCE_REQUIRED_FIELD_MISSING.to_string());
+    }
+    if !config::is_valid_confluence_base_url(&trimmed.base_url) {
+        return CmdResult::failure(config::ERR_INVALID_CONFLUENCE_BASE_URL.to_string());
+    }
+    if !config::is_valid_confluence_space_key(&trimmed.space_key) {
         return CmdResult::failure(config::ERR_INVALID_CONFLUENCE_SPACE_KEY.to_string());
     }
     if !trimmed.parent_page_id.is_empty()
@@ -267,6 +273,14 @@ pub async fn test_confluence_connection(
         });
     }
 
+    if !config::is_valid_confluence_base_url(&base_url) {
+        return CmdResult::success(ConfluenceTestResult {
+            success: false,
+            message: "Confluence Base URL 格式无效，必须为 http:// 或 https:// 开头的合法地址。".to_string(),
+            status_code: None,
+        });
+    }
+
     if !config::is_valid_confluence_space_key(&space_key) {
         return CmdResult::success(ConfluenceTestResult {
             success: false,
@@ -328,7 +342,7 @@ pub fn select_save_dir() -> CmdResult<String> {
 
 fn normalize_confluence_config(confluence: ConfluenceConfig) -> ConfluenceConfig {
     ConfluenceConfig {
-        base_url: confluence.base_url.trim().to_string(),
+        base_url: confluence.base_url.trim().trim_end_matches('/').to_string(),
         username: confluence.username.trim().to_string(),
         space_key: confluence.space_key.trim().to_string(),
         parent_page_id: confluence.parent_page_id.trim().to_string(),

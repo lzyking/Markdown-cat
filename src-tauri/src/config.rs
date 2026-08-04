@@ -12,6 +12,8 @@ pub const ERR_CONFIG_READ_FAILED: &str = "ERR_CONFIG_READ_FAILED";
 pub const ERR_INVALID_THEME_ID: &str = "ERR_INVALID_THEME_ID";
 pub const ERR_INVALID_CONFLUENCE_SPACE_KEY: &str = "ERR_INVALID_CONFLUENCE_SPACE_KEY";
 pub const ERR_INVALID_CONFLUENCE_PARENT_PAGE_ID: &str = "ERR_INVALID_CONFLUENCE_PARENT_PAGE_ID";
+pub const ERR_INVALID_CONFLUENCE_BASE_URL: &str = "ERR_INVALID_CONFLUENCE_BASE_URL";
+pub const ERR_CONFLUENCE_REQUIRED_FIELD_MISSING: &str = "ERR_CONFLUENCE_REQUIRED_FIELD_MISSING";
 pub const ERR_CONFLUENCE_TOKEN_ENTRY_FAILED: &str = "ERR_CONFLUENCE_TOKEN_ENTRY_FAILED";
 pub const ERR_CONFLUENCE_TOKEN_READ_FAILED: &str = "ERR_CONFLUENCE_TOKEN_READ_FAILED";
 pub const ERR_CONFLUENCE_TOKEN_WRITE_FAILED: &str = "ERR_CONFLUENCE_TOKEN_WRITE_FAILED";
@@ -87,6 +89,20 @@ pub fn is_valid_confluence_space_key(space_key: &str) -> bool {
 
 pub fn is_valid_confluence_parent_page_id(parent_page_id: &str) -> bool {
     !parent_page_id.is_empty() && parent_page_id.chars().all(|ch| ch.is_ascii_digit())
+}
+
+pub fn is_valid_confluence_base_url(base_url: &str) -> bool {
+    let trimmed = base_url.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    match url::Url::parse(trimmed) {
+        Ok(parsed) => {
+            let scheme = parsed.scheme();
+            (scheme == "http" || scheme == "https") && parsed.host_str().is_some()
+        }
+        Err(_) => false,
+    }
 }
 
 /// 应用配置结构。
@@ -352,5 +368,14 @@ mod tests {
             loaded.confluence.ignore_ssl,
             default_config.confluence.ignore_ssl
         );
+    }
+
+    #[test]
+    fn validates_confluence_base_url() {
+        assert!(super::is_valid_confluence_base_url("https://example.atlassian.net/wiki"));
+        assert!(super::is_valid_confluence_base_url("http://confluence.local:8080"));
+        assert!(!super::is_valid_confluence_base_url(""));
+        assert!(!super::is_valid_confluence_base_url("not-a-url"));
+        assert!(!super::is_valid_confluence_base_url("ftp://example.com"));
     }
 }
