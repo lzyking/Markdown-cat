@@ -1,1 +1,11 @@
-{}
+{
+  "DW-94": {
+    "answered_at": "2026-08-05",
+    "bundle_name": "",
+    "effect": "build",
+    "intent": "Reuse the distinctly-named test-only keyring service/account already used by DW-93's round-trip test to seed a token and verify resolve_connection_token falls back to it correctly, without touching the production 'markdown-cat-confluence' entry.",
+    "key": "2",
+    "label": "Use a dedicated test-only keyring entry (not production) in CI",
+    "resolution": ""
+  }
+}
