@@ -601,3 +601,31 @@ origin: migrated from legacy ledger ("spec-save-as-asset-migration-hardening.md"
 location: src/lib/image-assets.ts (extractAssetReferences)
 reason: extractAssetReferences matches image references inside fenced code blocks (e.g. a documentation snippet showing `<img src="./assets/demo.png">`), so a purely illustrative/example reference is treated as a real asset dependency and triggers a spurious "not migrated" warning or unnecessary migration attempt during Save As.
 status: open
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-11-2-confluence-network-and-process-resilience.md`
+  summary: `run_command_with_timeout` in `src-tauri/src/commands/config.rs` pipes the child's stdout/stderr but never drains them while polling `try_wait()`, so a command whose output exceeds the OS pipe buffer before exiting would block on write and appear to hang until the timeout fires instead of exiting normally.
+  evidence: Confirmed by independent review (Blind Hunter) reading the polling loop in `run_command_with_timeout`: `try_wait()` is called in a loop with no concurrent read of `child.stdout`/`child.stderr`, and output is only consumed via `wait_with_output()` after completion is detected. Low real-world likelihood for `md2cf --version`'s tiny output, but the helper is now general-purpose and could be reused for larger-output commands later.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-11-2-confluence-network-and-process-resilience.md`
+  summary: On timeout, `run_command_with_timeout` only kills the immediate child process; if `md2cf` is a wrapper script that spawns further subprocesses, those descendants are not reaped and can keep running after `check_md2cf_installed` has already returned a timeout result.
+  evidence: Confirmed by independent review (Blind Hunter): `child.kill()` targets only the direct child PID with no process-group/tree termination, so any grandchild processes spawned by a wrapper `md2cf` binary would survive past the reported timeout.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-11-2-confluence-network-and-process-resilience.md`
+  summary: The `confluenceFormDirty` dirty-form guard in `SettingsModal.vue` depends on toggling `suppressConfluenceDirtyTracking` around synchronous field assignments combined with a `flush: 'sync'` watcher; this pattern is correct today but fragile — any future refactor that moves the suppress-flag toggling out of a single synchronous block (e.g. splitting `applyConfluenceConfig` across an `await`) would silently defeat the guard with no test to catch the regression.
+  evidence: Confirmed by independent review (Blind Hunter), and acknowledged directly in the implementation's own code comment describing the `flush: 'sync'` requirement. No existing or planned test asserts the guard still works if the suppress-flag toggling is split across a microtask boundary.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-11-2-confluence-network-and-process-resilience.md`
+  summary: On timeout, `run_command_with_timeout` in `src-tauri/src/commands/config.rs` discards any partial stdout/stderr the `md2cf` process produced before being killed, so the user-facing message cannot distinguish "genuinely hung" from "was about to finish" — it always reports a generic timeout.
+  evidence: Confirmed by independent review (Blind Hunter): the timeout branch calls `child.kill()` then `child.wait()` and never surfaces the drained stdout/stderr threads' partial buffers in the resulting message.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-11-2-confluence-network-and-process-resilience.md`
+  summary: The new `response.chunk()`-based streaming body read and 1 MiB cap in `test_confluence_connection`, and the `Completed`/`TimedOut`/`NotFound` result-mapping in `check_md2cf_installed`, are only covered indirectly (via the pure `build_confluence_test_result` function and the generic `run_command_with_timeout` helper with unrelated test commands) — there is no integration test exercising the actual streaming loop against a real/mocked HTTP response, nor an end-to-end test of `check_md2cf_installed()` itself.
+  evidence: Confirmed by independent review (both Blind Hunter and Edge Case Hunter): adding either would require a local mock HTTP server or a real/fake `md2cf` binary on PATH, which the current test suite has no infrastructure for.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-11-2-confluence-network-and-process-resilience.md`
+  summary: When the 1 MiB body cap is hit in `test_confluence_connection`, the function returns immediately without reading/discarding the remainder of the HTTP response stream, which may prevent the underlying connection from being returned to reqwest's connection pool for reuse.
+  evidence: Confirmed by independent review (Blind Hunter): the `oversized` branch calls `return` directly after `break`, with no drain of the remaining `response.chunk()` stream before the response value is dropped.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-11-2-confluence-network-and-process-resilience.md`
+  summary: If `child.kill()` in `run_command_with_timeout` fails for a reason other than "process already exited in the race window" (e.g. an OS-level permission error), the subsequent `child.wait()` could theoretically block indefinitely if the process is actually still alive, defeating the intended timeout bound.
+  evidence: Confirmed by independent review (Edge Case Hunter): the `Err(_kill_err)` branch unconditionally calls `child.wait()` with no secondary timeout guard. Considered very low real-world probability since the process is a direct child owned by the calling process, but not provably impossible on all platforms.

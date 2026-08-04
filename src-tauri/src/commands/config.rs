@@ -7,6 +7,9 @@ use std::process::Command;
 
 const CONFLUENCE_TOKEN_SERVICE: &str = "markdown-cat-confluence";
 const CONFLUENCE_TOKEN_ACCOUNT: &str = "confluence-api-token";
+const MAX_CONFLUENCE_TEST_BODY_BYTES: usize = 1_048_576; // 1 MiB
+const MD2CF_CHECK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+const MD2CF_CHECK_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
 static CONFIG_WRITE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[derive(Debug, Serialize)]
@@ -216,11 +219,117 @@ pub fn clear_confluence_token() -> CmdResult<()> {
     }
 }
 
+enum CommandRunResult {
+    Completed(std::process::Output),
+    TimedOut,
+}
+
+/// Reads at most `cap` bytes from `reader` into a `Vec`, stopping early (without erroring) once
+/// the cap is reached. Used to drain a child's stdout/stderr on a background thread while the
+/// main thread polls for exit — see `run_command_with_timeout` for why this draining is required.
+fn read_capped(mut reader: impl std::io::Read, cap: usize) -> Vec<u8> {
+    let mut buf = Vec::new();
+    let mut chunk = [0u8; 8192];
+    loop {
+        match reader.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(n) => {
+                buf.extend_from_slice(&chunk[..n]);
+                if buf.len() >= cap {
+                    break;
+                }
+            }
+            Err(_) => break,
+        }
+    }
+    buf
+}
+
+/// Spawns `cmd`, polls with `try_wait()` at `MD2CF_CHECK_POLL_INTERVAL` until it exits or
+/// `timeout` elapses. On timeout, kills the child and returns `TimedOut`.
+///
+/// stdout/stderr are drained concurrently on background threads (capped at
+/// `MAX_CHILD_OUTPUT_BYTES` each) while the main thread polls: without this, a child that writes
+/// more than the OS pipe buffer (commonly ~64 KiB) before exiting would block on the write,
+/// `try_wait()` would never observe an exit, and the call would always resolve as `TimedOut` —
+/// the classic "forgot to drain the pipes" footgun that plain `Command::output()` avoids
+/// internally but a hand-rolled poll loop would otherwise reintroduce.
+///
+/// If the child happens to exit naturally in the tiny window between `try_wait()` returning
+/// `None` and `child.kill()` being called, `kill()` may return an `Err` (the process is already
+/// gone). That is NOT a real failure — treat it as "process already exited" and fall back to
+/// `child.wait()` to collect its actual (non-killed) exit status instead of reporting a
+/// spurious timeout. Likewise, if `try_wait()` itself returns an `Err`, the child is killed and
+/// reaped before the error is propagated, so it is never leaked as an orphaned/zombie process.
+fn run_command_with_timeout(
+    mut cmd: std::process::Command,
+    timeout: std::time::Duration,
+) -> std::io::Result<CommandRunResult> {
+    const MAX_CHILD_OUTPUT_BYTES: usize = 1_048_576; // 1 MiB per stream — ample for `md2cf --version`
+
+    cmd.stdin(std::process::Stdio::null());
+    cmd.stdout(std::process::Stdio::piped());
+    cmd.stderr(std::process::Stdio::piped());
+    let mut child = cmd.spawn()?;
+
+    let stdout = child.stdout.take().expect("stdout was configured as piped");
+    let stderr = child.stderr.take().expect("stderr was configured as piped");
+    let stdout_thread = std::thread::spawn(move || read_capped(stdout, MAX_CHILD_OUTPUT_BYTES));
+    let stderr_thread = std::thread::spawn(move || read_capped(stderr, MAX_CHILD_OUTPUT_BYTES));
+
+    let start = std::time::Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let stdout = stdout_thread.join().unwrap_or_default();
+                let stderr = stderr_thread.join().unwrap_or_default();
+                return Ok(CommandRunResult::Completed(std::process::Output {
+                    status,
+                    stdout,
+                    stderr,
+                }));
+            }
+            Ok(None) => {
+                if start.elapsed() >= timeout {
+                    match child.kill() {
+                        Ok(_) => {
+                            let _ = child.wait()?;
+                            let _ = stdout_thread.join();
+                            let _ = stderr_thread.join();
+                            return Ok(CommandRunResult::TimedOut);
+                        }
+                        Err(_kill_err) => {
+                            let status = child.wait()?;
+                            let stdout = stdout_thread.join().unwrap_or_default();
+                            let stderr = stderr_thread.join().unwrap_or_default();
+                            return Ok(CommandRunResult::Completed(std::process::Output {
+                                status,
+                                stdout,
+                                stderr,
+                            }));
+                        }
+                    }
+                }
+                std::thread::sleep(MD2CF_CHECK_POLL_INTERVAL);
+            }
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = stdout_thread.join();
+                let _ = stderr_thread.join();
+                return Err(error);
+            }
+        }
+    }
+}
+
 /// 检测 md2cf 命令行工具是否可用。
 #[tauri::command]
 pub fn check_md2cf_installed() -> CmdResult<Md2cfCheckResult> {
-    match Command::new("md2cf").arg("--version").output() {
-        Ok(output) => {
+    let mut cmd = Command::new("md2cf");
+    cmd.arg("--version");
+    match run_command_with_timeout(cmd, MD2CF_CHECK_TIMEOUT) {
+        Ok(CommandRunResult::Completed(output)) => {
             let version = first_non_empty_line(&output.stdout)
                 .or_else(|| first_non_empty_line(&output.stderr));
             let installed = output.status.success();
@@ -241,6 +350,11 @@ pub fn check_md2cf_installed() -> CmdResult<Md2cfCheckResult> {
                 message,
             })
         }
+        Ok(CommandRunResult::TimedOut) => CmdResult::success(Md2cfCheckResult {
+            installed: false,
+            version: None,
+            message: "检测 md2cf 超时，将使用 REST API 直连模式。".to_string(),
+        }),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             CmdResult::success(Md2cfCheckResult {
                 installed: false,
@@ -325,7 +439,54 @@ pub async fn test_confluence_connection(
         .await;
 
     match response {
-        Ok(response) => CmdResult::success(build_confluence_test_result(response.status())),
+        Ok(mut response) => {
+            let status = response.status();
+            let content_type = response
+                .headers()
+                .get(reqwest::header::CONTENT_TYPE)
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.to_string());
+
+            let mut buf: Vec<u8> = Vec::new();
+            let mut oversized = false;
+            loop {
+                match response.chunk().await {
+                    Ok(Some(chunk)) => {
+                        // Check before extending so `buf` never grows past the cap even when a
+                        // single chunk alone would exceed it.
+                        if buf.len() + chunk.len() > MAX_CONFLUENCE_TEST_BODY_BYTES {
+                            oversized = true;
+                            break;
+                        }
+                        buf.extend_from_slice(&chunk);
+                    }
+                    Ok(None) => break,
+                    Err(error) => {
+                        return CmdResult::success(ConfluenceTestResult {
+                            success: false,
+                            message: format_confluence_request_error(&error, payload.ignore_ssl),
+                            status_code: Some(status.as_u16()),
+                        });
+                    }
+                }
+            }
+
+            if oversized {
+                return CmdResult::success(ConfluenceTestResult {
+                    success: false,
+                    message: "响应体超出大小限制，已中止读取。".to_string(),
+                    status_code: Some(status.as_u16()),
+                });
+            }
+
+            let body = String::from_utf8_lossy(&buf).to_string();
+            CmdResult::success(build_confluence_test_result(
+                status,
+                content_type.as_deref(),
+                &body,
+                &space_key,
+            ))
+        }
         Err(error) => CmdResult::success(ConfluenceTestResult {
             success: false,
             message: format_confluence_request_error(&error, payload.ignore_ssl),
@@ -390,12 +551,44 @@ pub(crate) fn resolve_connection_token(api_token: Option<String>) -> Result<Stri
     }
 }
 
-fn build_confluence_test_result(status: StatusCode) -> ConfluenceTestResult {
+fn build_confluence_test_result(
+    status: StatusCode,
+    content_type: Option<&str>,
+    body: &str,
+    requested_space_key: &str,
+) -> ConfluenceTestResult {
     let status_code = Some(status.as_u16());
     if status.is_success() {
+        // Case-insensitive comparison: Confluence space keys are conventionally uppercase and
+        // some deployments/proxies may normalize casing on lookup, so requiring exact
+        // case-sensitive equality could false-reject an otherwise valid connection. A
+        // case-insensitive match on the literal requested key remains an extremely strong
+        // signal — a generic unrelated error payload accidentally containing that exact
+        // identifier (in any case) as its own `key` field is not a realistic false-positive risk.
+        let key_matches = serde_json::from_str::<serde_json::Value>(body)
+            .ok()
+            .and_then(|v| v.as_object().cloned())
+            .and_then(|obj| {
+                obj.get("key")
+                    .and_then(serde_json::Value::as_str)
+                    .map(|s| s.eq_ignore_ascii_case(requested_space_key))
+            })
+            .unwrap_or(false);
+
+        let content_type_incompatible = content_type
+            .map(|v| !v.to_ascii_lowercase().contains("json"))
+            .unwrap_or(false);
+
+        if key_matches && !content_type_incompatible {
+            return ConfluenceTestResult {
+                success: true,
+                message: "连接成功，已验证空间访问权限。".to_string(),
+                status_code,
+            };
+        }
         return ConfluenceTestResult {
-            success: true,
-            message: "连接成功，已验证空间访问权限。".to_string(),
+            success: false,
+            message: "响应内容不是有效的 Confluence 数据，可能被代理/SSO 拦截。".to_string(),
             status_code,
         };
     }
@@ -458,4 +651,215 @@ fn first_non_empty_line(bytes: &[u8]) -> Option<String> {
         .lines()
         .find(|line| !line.trim().is_empty())
         .map(|line| line.trim().to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{build_confluence_test_result, run_command_with_timeout, CommandRunResult};
+    use reqwest::StatusCode;
+    use serde_json::json;
+    use std::process::Command;
+    use std::time::Duration;
+
+    #[test]
+    fn build_confluence_test_result_accepts_matching_key_json() {
+        let body = json!({ "key": "TEAM" }).to_string();
+        let result = build_confluence_test_result(
+            StatusCode::OK,
+            Some("application/json"),
+            &body,
+            "TEAM",
+        );
+
+        assert!(result.success);
+        assert_eq!(result.status_code, Some(200));
+    }
+
+    #[test]
+    fn build_confluence_test_result_accepts_matching_key_json_with_name() {
+        let body = json!({ "key": "TEAM", "name": "Team Space" }).to_string();
+        let result = build_confluence_test_result(
+            StatusCode::OK,
+            Some("application/json"),
+            &body,
+            "TEAM",
+        );
+
+        assert!(result.success);
+    }
+
+    #[test]
+    fn build_confluence_test_result_accepts_case_insensitive_key_match() {
+        let body = json!({ "key": "team" }).to_string();
+        let result = build_confluence_test_result(
+            StatusCode::OK,
+            Some("application/json"),
+            &body,
+            "TEAM",
+        );
+
+        assert!(result.success);
+    }
+
+    #[test]
+    fn build_confluence_test_result_rejects_mismatched_key() {
+        let body = json!({ "key": "OTHER", "name": "Other Space" }).to_string();
+        let result = build_confluence_test_result(
+            StatusCode::OK,
+            Some("application/json"),
+            &body,
+            "TEAM",
+        );
+
+        assert!(!result.success);
+    }
+
+    #[test]
+    fn build_confluence_test_result_rejects_name_only_error_payload() {
+        let body = json!({ "name": "No space found with key TEAM" }).to_string();
+        let result = build_confluence_test_result(
+            StatusCode::OK,
+            Some("application/json"),
+            &body,
+            "TEAM",
+        );
+
+        assert!(!result.success);
+    }
+
+    #[test]
+    fn build_confluence_test_result_rejects_null_key() {
+        let body = json!({ "key": serde_json::Value::Null, "name": "TEAM" }).to_string();
+        let result = build_confluence_test_result(
+            StatusCode::OK,
+            Some("application/json"),
+            &body,
+            "TEAM",
+        );
+
+        assert!(!result.success);
+    }
+
+    #[test]
+    fn build_confluence_test_result_rejects_html_body() {
+        let body = "<html><body>SSO</body></html>";
+        let result = build_confluence_test_result(StatusCode::OK, Some("text/html"), body, "TEAM");
+
+        assert!(!result.success);
+    }
+
+    #[test]
+    fn build_confluence_test_result_rejects_json_without_key() {
+        let body = json!({ "id": 12345, "name": "Team Space" }).to_string();
+        let result = build_confluence_test_result(
+            StatusCode::OK,
+            Some("application/json"),
+            &body,
+            "TEAM",
+        );
+
+        assert!(!result.success);
+    }
+
+    #[test]
+    fn build_confluence_test_result_accepts_json_content_type_variants() {
+        let body = json!({ "key": "TEAM" }).to_string();
+        let hal_json = build_confluence_test_result(
+            StatusCode::OK,
+            Some("application/hal+json"),
+            &body,
+            "TEAM",
+        );
+        let missing_content_type = build_confluence_test_result(StatusCode::OK, None, &body, "TEAM");
+
+        assert!(hal_json.success);
+        assert!(missing_content_type.success);
+    }
+
+    #[test]
+    fn build_confluence_test_result_rejects_non_json_content_type() {
+        let body = json!({ "key": "TEAM" }).to_string();
+        let result = build_confluence_test_result(StatusCode::OK, Some("text/html"), &body, "TEAM");
+
+        assert!(!result.success);
+    }
+
+    #[cfg(unix)]
+    fn fast_command() -> Command {
+        Command::new("true")
+    }
+
+    #[cfg(windows)]
+    fn fast_command() -> Command {
+        let mut command = Command::new("cmd");
+        command.args(["/C", "exit 0"]);
+        command
+    }
+
+    #[cfg(unix)]
+    fn slow_command() -> Command {
+        let mut command = Command::new("sh");
+        command.args(["-c", "sleep 2"]);
+        command
+    }
+
+    #[cfg(windows)]
+    fn slow_command() -> Command {
+        let mut command = Command::new("cmd");
+        command.args(["/C", "ping 127.0.0.1 -n 3 > nul"]);
+        command
+    }
+
+    #[test]
+    fn run_command_with_timeout_completes_for_fast_command() {
+        let result = run_command_with_timeout(fast_command(), Duration::from_millis(500))
+            .expect("fast command should run");
+
+        match result {
+            CommandRunResult::Completed(output) => assert!(output.status.success()),
+            CommandRunResult::TimedOut => panic!("fast command unexpectedly timed out"),
+        }
+    }
+
+    #[test]
+    fn run_command_with_timeout_times_out_for_slow_command() {
+        let result = run_command_with_timeout(slow_command(), Duration::from_millis(200))
+            .expect("slow command should spawn");
+
+        assert!(matches!(result, CommandRunResult::TimedOut));
+    }
+
+    #[cfg(unix)]
+    fn chatty_command() -> Command {
+        // Writes ~200 KiB to stdout — well past a typical OS pipe buffer (~64 KiB) — then exits
+        // quickly. Without concurrently draining stdout, the child would block on the write,
+        // `try_wait()` would never observe the exit, and this would always resolve as
+        // `TimedOut` even though the process would complete almost instantly.
+        let mut command = Command::new("sh");
+        command.args(["-c", "yes | head -c 204800"]);
+        command
+    }
+
+    #[cfg(windows)]
+    fn chatty_command() -> Command {
+        let mut command = Command::new("cmd");
+        command.args(["/C", "for /L %i in (1,1,20000) do @echo AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"]);
+        command
+    }
+
+    #[test]
+    fn run_command_with_timeout_drains_large_output_without_deadlocking() {
+        let result = run_command_with_timeout(chatty_command(), Duration::from_secs(3))
+            .expect("chatty command should run and be drained, not deadlock");
+
+        match result {
+            CommandRunResult::Completed(output) => {
+                assert!(output.status.success());
+                assert!(!output.stdout.is_empty());
+            }
+            CommandRunResult::TimedOut => {
+                panic!("chatty command incorrectly timed out — stdout was not drained concurrently")
+            }
+        }
+    }
 }

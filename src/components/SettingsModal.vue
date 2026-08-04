@@ -41,6 +41,8 @@ const spaceKeyTouched = ref(false)
 const parentPageIdTouched = ref(false)
 const baseUrlTouched = ref(false)
 const usernameTouched = ref(false)
+const confluenceFormDirty = ref(false)
+const suppressConfluenceDirtyTracking = ref(false)
 
 const loadedConfluenceConfig = ref<{ baseUrl: string; username: string }>({
   baseUrl: '',
@@ -54,6 +56,16 @@ const confluenceForm = reactive<ConfluenceConfig>({
   parentPageId: '',
   ignoreSsl: false,
 })
+
+watch(
+  confluenceForm,
+  () => {
+    if (!suppressConfluenceDirtyTracking.value) {
+      confluenceFormDirty.value = true
+    }
+  },
+  { deep: true, flush: 'sync' }
+)
 
 const tokenPlaceholder = computed(() =>
   hasStoredToken.value ? '已保存令牌；留空则保持不变' : '请输入 API Token 或 Personal Access Token'
@@ -147,20 +159,26 @@ function resetConfluenceMessages() {
   parentPageIdTouched.value = false
   baseUrlTouched.value = false
   usernameTouched.value = false
+  suppressConfluenceDirtyTracking.value = true
   confluenceForm.baseUrl = ''
   confluenceForm.username = ''
   confluenceForm.spaceKey = ''
   confluenceForm.parentPageId = ''
   confluenceForm.ignoreSsl = false
+  suppressConfluenceDirtyTracking.value = false
+  confluenceFormDirty.value = false
   loadedConfluenceConfig.value = { baseUrl: '', username: '' }
 }
 
 function applyConfluenceConfig(config?: Partial<ConfluenceConfig>) {
+  suppressConfluenceDirtyTracking.value = true
   confluenceForm.baseUrl = config?.baseUrl ?? ''
   confluenceForm.username = config?.username ?? ''
   confluenceForm.spaceKey = config?.spaceKey ?? ''
   confluenceForm.parentPageId = config?.parentPageId ?? ''
   confluenceForm.ignoreSsl = config?.ignoreSsl ?? false
+  suppressConfluenceDirtyTracking.value = false
+  confluenceFormDirty.value = false
 
   if (config) {
     loadedConfluenceConfig.value = {
@@ -180,9 +198,13 @@ async function loadConfluenceSettings() {
   ])
 
   if (configOutcome.status === 'fulfilled' && configOutcome.value.ok) {
-    applyConfluenceConfig(configOutcome.value.data?.confluence)
+    if (!confluenceFormDirty.value) {
+      applyConfluenceConfig(configOutcome.value.data?.confluence)
+    }
   } else {
-    applyConfluenceConfig()
+    if (!confluenceFormDirty.value) {
+      applyConfluenceConfig()
+    }
     const reason =
       configOutcome.status === 'fulfilled'
         ? configOutcome.value.error
@@ -402,6 +424,8 @@ function resetConfluenceFeedback() {
   confluenceSuccessMessage.value = ''
   connectionMessage.value = ''
   connectionSucceeded.value = null
+  md2cfMessage.value = ''
+  md2cfInstalled.value = null
 }
 </script>
 
