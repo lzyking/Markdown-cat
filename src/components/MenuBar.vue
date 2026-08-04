@@ -174,7 +174,7 @@ function onSubmenuTriggerKeydown(e: KeyboardEvent) {
       @focusout="markdownCatMenuExpanded.onFocusOut"
     >
       Markdown Cat
-      <div class="menu-dropdown" role="menu">
+      <div class="menu-dropdown" role="menu" aria-label="Markdown Cat">
         <div
           class="menu-row"
           tabindex="0"
@@ -198,7 +198,7 @@ function onSubmenuTriggerKeydown(e: KeyboardEvent) {
       @focusout="fileMenuExpanded.onFocusOut"
     >
       文件
-      <div class="menu-dropdown" role="menu">
+      <div class="menu-dropdown" role="menu" aria-label="文件">
         <div class="menu-row" tabindex="0" role="menuitem" @click="openFile" @keydown="onMenuRowKeydown($event, openFile)">
           打开文件 (Open)…
         </div>
@@ -253,7 +253,7 @@ function onSubmenuTriggerKeydown(e: KeyboardEvent) {
         >
           <span>Theme</span>
           <span class="submenu-arrow" aria-hidden="true">›</span>
-          <div class="submenu-dropdown" role="menu">
+          <div class="submenu-dropdown" role="menu" aria-label="Theme">
             <div class="theme-section">
               <div class="menu-section-label">Light Themes</div>
               <button

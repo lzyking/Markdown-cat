@@ -47,6 +47,7 @@ pub fn run() {
             commands::doc::read_image_asset,
             commands::doc::save_document,
             commands::doc::save_document_as,
+            commands::doc::write_export_file,
             commands::doc::save_image_asset,
             commands::doc::copy_asset_file,
             commands::pdf_export::export_pdf,

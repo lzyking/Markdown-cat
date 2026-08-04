@@ -86,6 +86,17 @@ async function injectMocks(page: Page) {
           },
         }
       },
+      write_export_file: (args: any) => {
+        const targetPath = args?.targetPath || '/tmp/markdown-cat-test/exported.html'
+        const pathSegments = String(targetPath).split(/[/\\]/)
+        return {
+          ok: true,
+          data: {
+            filename: pathSegments[pathSegments.length - 1] || 'exported.html',
+            path: targetPath,
+          },
+        }
+      },
       save_image_asset: (args: any) => {
         const dir = args?.targetDir || '/tmp/markdown-cat-test/assets'
         const fn = args?.filename || 'img_test.png'

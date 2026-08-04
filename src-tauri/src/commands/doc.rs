@@ -219,47 +219,63 @@ pub fn read_external_document(
     }
 }
 
-/// 将文档另存为指定绝对路径。
-/// 保存成功后动态放宽目标目录的 asset:// 协议可访问范围，
-/// 使新目录中已存在的相对路径图片也能在预览中正常渲染。
+fn write_export_file_impl(target_path: &str, content: &str) -> CmdResult<SaveResult> {
+    let path = std::path::Path::new(target_path);
+    if let Some(parent) = path.parent() {
+        if let Err(e) = std::fs::create_dir_all(parent) {
+            return CmdResult::failure(format!("ERR_DIR_CREATE_FAILED: {}", e));
+        }
+    }
+    match std::fs::write(path, content) {
+        Ok(_) => {
+            let filename = path
+                .file_name()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| "Untitled.md".to_string());
+            CmdResult::success(SaveResult {
+                filename,
+                path: target_path.to_string(),
+            })
+        }
+        Err(e) => CmdResult::failure(format!("ERR_SAVE_FAILED: {}", e)),
+    }
+}
+
+fn save_document_as_impl<R: tauri::Runtime>(
+    manager: &impl tauri::Manager<R>,
+    target_path: &str,
+    content: &str,
+) -> CmdResult<SaveResult> {
+    let result = write_export_file_impl(target_path, content);
+    if !result.ok {
+        return result;
+    }
+
+    let path = std::path::Path::new(target_path);
+    if let Some(parent) = path.parent() {
+        if let Err(e) = manager.asset_protocol_scope().allow_directory(parent, true) {
+            eprintln!(
+                "Failed to widen asset protocol scope for {}: {e}",
+                parent.display()
+            );
+        }
+    }
+
+    result
+}
+
 #[tauri::command]
 pub fn save_document_as(
     app_handle: tauri::AppHandle,
     target_path: String,
     content: String,
 ) -> CmdResult<SaveResult> {
-    use tauri::Manager;
+    save_document_as_impl(&app_handle, &target_path, &content)
+}
 
-    let path = std::path::Path::new(&target_path);
-    if let Some(parent) = path.parent() {
-        if let Err(e) = std::fs::create_dir_all(parent) {
-            return CmdResult::failure(format!("ERR_DIR_CREATE_FAILED: {}", e));
-        }
-    }
-    match std::fs::write(path, &content) {
-        Ok(_) => {
-            let filename = path
-                .file_name()
-                .map(|s| s.to_string_lossy().to_string())
-                .unwrap_or_else(|| "Untitled.md".to_string());
-            if let Some(parent) = path.parent() {
-                if let Err(e) = app_handle
-                    .asset_protocol_scope()
-                    .allow_directory(parent, true)
-                {
-                    eprintln!(
-                        "Failed to widen asset protocol scope for {}: {e}",
-                        parent.display()
-                    );
-                }
-            }
-            CmdResult::success(SaveResult {
-                filename,
-                path: target_path,
-            })
-        }
-        Err(e) => CmdResult::failure(format!("ERR_SAVE_FAILED: {}", e)),
-    }
+#[tauri::command]
+pub fn write_export_file(target_path: String, content: String) -> CmdResult<SaveResult> {
+    write_export_file_impl(&target_path, &content)
 }
 
 /// 读取用于 HTML 导出的本地图片。超过给定大小限制时仅返回元数据，不回传 base64 内容。
@@ -413,7 +429,10 @@ pub fn copy_asset_file(
 
 #[cfg(test)]
 mod tests {
-    use super::{copy_asset_file_impl, save_image_asset_base64_impl, save_image_asset_impl};
+    use super::{
+        copy_asset_file_impl, save_document_as_impl, save_image_asset_base64_impl,
+        save_image_asset_impl, write_export_file_impl,
+    };
     use crate::doc;
     use std::fs;
     use tauri::Manager;
@@ -627,5 +646,84 @@ mod tests {
 
         assert!(!result.ok);
         assert_eq!(result.error, Some(doc::ERR_SAVE_FAILED.to_string()));
+    }
+
+    #[test]
+    fn write_export_file_impl_writes_file_with_expected_result() {
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let target_path = temp_dir.path().join("export.html");
+
+        let result = write_export_file_impl(&target_path.to_string_lossy(), "<h1>Markdown Cat</h1>");
+
+        assert!(result.ok);
+        let data = result.data.expect("export save result");
+        assert_eq!(data.filename, "export.html");
+        assert_eq!(data.path, target_path.to_string_lossy());
+        assert_eq!(fs::read_to_string(&target_path).unwrap(), "<h1>Markdown Cat</h1>");
+    }
+
+    #[test]
+    fn write_export_file_impl_creates_parent_directories() {
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let target_dir = temp_dir.path().join("nested").join("exports");
+        let target_path = target_dir.join("export.html");
+
+        let result = write_export_file_impl(&target_path.to_string_lossy(), "<p>ok</p>");
+
+        assert!(result.ok);
+        assert!(target_dir.is_dir());
+        assert_eq!(fs::read_to_string(&target_path).unwrap(), "<p>ok</p>");
+    }
+
+    #[test]
+    fn write_export_file_impl_does_not_allow_asset_directory() {
+        let app = tauri::test::mock_app();
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let target_dir = temp_dir.path().join("exports");
+        let target_path = target_dir.join("export.html");
+
+        assert!(!app.asset_protocol_scope().is_allowed(&target_dir));
+
+        let result = write_export_file_impl(&target_path.to_string_lossy(), "<p>scope stays closed</p>");
+
+        assert!(result.ok);
+        assert_eq!(
+            fs::read_to_string(&target_path).unwrap(),
+            "<p>scope stays closed</p>"
+        );
+        assert!(!app.asset_protocol_scope().is_allowed(&target_dir));
+    }
+
+    #[test]
+    fn write_export_file_impl_returns_err_save_failed_on_write_failure() {
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let target_path = temp_dir.path().join("occupied-dir");
+        fs::create_dir_all(&target_path).expect("create occupied dir");
+
+        let result = write_export_file_impl(&target_path.to_string_lossy(), "<p>fail</p>");
+
+        assert!(!result.ok);
+        assert!(
+            result
+                .error
+                .as_deref()
+                .is_some_and(|error| error.starts_with("ERR_SAVE_FAILED:"))
+        );
+    }
+
+    #[test]
+    fn save_document_as_still_allows_asset_directory() {
+        let app = tauri::test::mock_app();
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let target_dir = temp_dir.path().join("documents");
+        let target_path = target_dir.join("note.md");
+
+        assert!(!app.asset_protocol_scope().is_allowed(&target_dir));
+
+        let result = save_document_as_impl(&app, &target_path.to_string_lossy(), "# preserved");
+
+        assert!(result.ok);
+        assert_eq!(fs::read_to_string(&target_path).unwrap(), "# preserved");
+        assert!(app.asset_protocol_scope().is_allowed(&target_dir));
     }
 }

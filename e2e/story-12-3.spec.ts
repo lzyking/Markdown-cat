@@ -184,7 +184,7 @@ test.describe('Story 12.3：会话恢复与资源操作链回归测试', () => {
     await expect.poll(async () => page.evaluate(() => {
       const invocations = (window as any).__TAURI_MOCK__.invocations as Array<any>
       const exportCalls = invocations.filter(
-        (entry) => entry.command === 'save_document_as' && entry.args?.targetPath === '/tmp/markdown-cat-test/docs/exported.html',
+        (entry) => entry.command === 'write_export_file' && entry.args?.targetPath === '/tmp/markdown-cat-test/docs/exported.html',
       )
       return exportCalls.length > 0 ? exportCalls[exportCalls.length - 1].args.content : null
     })).not.toBeNull()
@@ -192,7 +192,7 @@ test.describe('Story 12.3：会话恢复与资源操作链回归测试', () => {
     const exportHtml = await page.evaluate(() => {
       const invocations = (window as any).__TAURI_MOCK__.invocations as Array<any>
       const exportCalls = invocations.filter(
-        (entry) => entry.command === 'save_document_as' && entry.args?.targetPath === '/tmp/markdown-cat-test/docs/exported.html',
+        (entry) => entry.command === 'write_export_file' && entry.args?.targetPath === '/tmp/markdown-cat-test/docs/exported.html',
       )
       return exportCalls.length > 0 ? exportCalls[exportCalls.length - 1].args.content : ''
     }) as string

@@ -727,3 +727,7 @@ status: open
 - source_spec: `_bmad-output/implementation-artifacts/spec-13-1-design-tokens-hardcode-cleanup.md`
   summary: No automated test exercises the tokenized colors (`--color-overlay-header`/`--color-overlay-zebra`/`--color-success`/`--color-accent-foreground`/`--color-error`) added by this story under non-default themes or in the exported-HTML code path, so a future theme-palette edit could silently regress these consumers without test failure.
   evidence: Confirmed via review (Blind Hunter): existing test suites only cover default-theme rendering; this story's own Verification section only required `npm run build` and static grep checks, not theme-matrix or export-path assertions, consistent with its "refactor, no behavior change" scope.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-13-2-menu-aria-labels-and-tauri-scope-safety.md`
+  summary: The new `write_export_file` Tauri command is a generic file-write primitive (any `target_path`/`content`) with no export-specific guardrails (e.g. restricting to `.html` extensions or validating the path isn't inside a sensitive directory), broadening the frontend-invokable API surface beyond strictly what HTML export needs.
+  evidence: Confirmed by independent review (Blind Hunter). This story's spec scoped `write_export_file` only to mirror `save_document_as`'s write semantics minus the asset-scope widening (DW-72); adding path/extension validation was not in scope and risks over-specifying "how" per the spec template's guidance.

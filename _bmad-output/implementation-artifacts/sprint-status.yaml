@@ -106,7 +106,7 @@ development_status:
   epic-12-retrospective: optional
   epic-13: backlog
   13-1-design-tokens-hardcode-cleanup: done
-  13-2-menu-aria-labels-and-tauri-scope-safety: backlog
+  13-2-menu-aria-labels-and-tauri-scope-safety: done
   epic-13-retrospective: optional
 
 action_items:

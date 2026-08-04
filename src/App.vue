@@ -416,7 +416,7 @@ async function handleExportHtml() {
       },
     })
 
-    const saveResult = await invoke<CmdResult<SaveResult>>('save_document_as', {
+    const saveResult = await invoke<CmdResult<SaveResult>>('write_export_file', {
       targetPath: target,
       content: exported.html,
     })
