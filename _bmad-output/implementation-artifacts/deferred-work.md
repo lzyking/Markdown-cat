@@ -717,7 +717,9 @@ decision: 2026-08-05 Use a dedicated test-only keyring entry (not production) in
 origin: migrated from legacy ledger ("_bmad-output/implementation-artifacts/spec-12-1-session-startup-restore-fault-tolerance.md"), 2026-08-04
 location: src/App.vue (onMounted startup restore)
 reason: When the stale-vs-superseded startup restore path clears `lastOpenedFile` (`resolveStartupRestoreOutcome().shouldClearStaleConfig`) but a newer manual open request has since started, the clear is skipped entirely (`isRestoreStillLatest` guard), so a genuinely broken `lastOpenedFile` path can survive into the next launch instead of being cleared immediately. Confirmed by independent review (Blind Hunter and Edge Case Hunter): `App.vue`'s `onMounted` only calls `update_last_opened_file({ filePath: null })` when `isRestoreStillLatest` is true, so a race where the user opens another file while the broken restore is still resolving leaves the bad path in config for one more launch cycle. Low impact — the next launch's restore attempt against the same broken path will still fail and clear it then — but not immediate self-healing.
-status: open
+status: done 2026-08-05
+resolution: closed by human decision: The race window is narrow (startup only, only when a newer open races the restore's async read) and the broken path is cleared automatically on the very next launch attempt; the added complexity of deferred/queued clearing isn't justified by this low-frequency, self-healing edge case.
+decision: 2026-08-05 Keep current behavior: rely on one-launch self-healing — The race window is narrow (startup only, only when a newer open races the restore's async read) and the broken path is cleared automatically on the very next launch attempt; the added complexity of deferred/queued clearing isn't justified by this low-frequency, self-healing edge case.
 
 ### DW-96: When the startup last-opened-file restore fails or throws and the blank-document fallback silently takes over, no status-bar message informs the us...
 
