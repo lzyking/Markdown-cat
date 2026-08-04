@@ -10,6 +10,7 @@ const CONFLUENCE_TOKEN_ACCOUNT: &str = "confluence-api-token";
 const MAX_CONFLUENCE_TEST_BODY_BYTES: usize = 1_048_576; // 1 MiB
 const MD2CF_CHECK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 const MD2CF_CHECK_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
+const MD2CF_KILL_FAILURE_WAIT: std::time::Duration = std::time::Duration::from_secs(3);
 static CONFIG_WRITE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[derive(Debug, Serialize)]
@@ -221,7 +222,12 @@ pub fn clear_confluence_token() -> CmdResult<()> {
 
 enum CommandRunResult {
     Completed(std::process::Output),
-    TimedOut,
+    TimedOut { stdout: Vec<u8>, stderr: Vec<u8> },
+}
+
+enum KillProcessTreeResult {
+    Killed,
+    AlreadyExited,
 }
 
 /// Reads at most `cap` bytes from `reader` into a `Vec`, stopping early (without erroring) once
@@ -245,6 +251,135 @@ fn read_capped(mut reader: impl std::io::Read, cap: usize) -> Vec<u8> {
     buf
 }
 
+fn join_child_output(
+    stdout_thread: std::thread::JoinHandle<Vec<u8>>,
+    stderr_thread: std::thread::JoinHandle<Vec<u8>>,
+) -> (Vec<u8>, Vec<u8>) {
+    (
+        stdout_thread.join().unwrap_or_default(),
+        stderr_thread.join().unwrap_or_default(),
+    )
+}
+
+#[cfg(test)]
+static TEST_TIMEOUT_KILL_DELAY_MS: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
+fn maybe_delay_before_timeout_kill() {
+    #[cfg(test)]
+    {
+        let delay_ms = TEST_TIMEOUT_KILL_DELAY_MS.load(std::sync::atomic::Ordering::SeqCst);
+        if delay_ms > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+        }
+    }
+}
+
+#[cfg(unix)]
+// Kills the child's *process group* (this process plus any descendant that has not called
+// `setsid`/changed its own group), not a fully general process tree: a descendant that
+// deliberately detaches into a new session/group would survive. `md2cf` (a simple CLI/wrapper)
+// is not expected to do this; this is the same scope limitation most process-group-based
+// "kill the tree" implementations accept.
+fn kill_process_tree(child: &std::process::Child) -> std::io::Result<KillProcessTreeResult> {
+    let pgid = child.id() as libc::pid_t;
+    if unsafe { libc::kill(-pgid, libc::SIGKILL) } == 0 {
+        Ok(KillProcessTreeResult::Killed)
+    } else {
+        let error = std::io::Error::last_os_error();
+        if error.raw_os_error() == Some(libc::ESRCH) {
+            Ok(KillProcessTreeResult::AlreadyExited)
+        } else {
+            Err(error)
+        }
+    }
+}
+
+#[cfg(windows)]
+fn kill_process_tree(child: &std::process::Child) -> std::io::Result<KillProcessTreeResult> {
+    // `taskkill` is spawned rather than run via the blocking `.output()` helper and then bounded
+    // with the same poll-based wait used elsewhere in this module: a hung/blocked `taskkill.exe`
+    // (e.g. AV interference, an overloaded system) must not make this function block
+    // indefinitely, which would defeat the whole point of the timeout it is enforcing.
+    let pid = child.id().to_string();
+    let mut taskkill = std::process::Command::new("taskkill")
+        .args(["/PID", &pid, "/T", "/F"])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()?;
+
+    let stdout = taskkill.stdout.take().expect("stdout piped");
+    let stderr = taskkill.stderr.take().expect("stderr piped");
+    let stdout_thread = std::thread::spawn(move || read_capped(stdout, 8192));
+    let stderr_thread = std::thread::spawn(move || read_capped(stderr, 8192));
+
+    let status = match wait_for_child_exit_after_failed_kill(&mut taskkill, MD2CF_KILL_FAILURE_WAIT)?
+    {
+        Some(status) => status,
+        None => {
+            // `taskkill` itself did not return in time: best-effort kill it so it doesn't
+            // linger, then report a real failure rather than blocking further.
+            let _ = taskkill.kill();
+            let _ = taskkill.wait();
+            let _ = stdout_thread.join();
+            let _ = stderr_thread.join();
+            return Err(std::io::Error::other(format!(
+                "taskkill /PID {pid} /T /F did not exit within {:?}",
+                MD2CF_KILL_FAILURE_WAIT
+            )));
+        }
+    };
+
+    let stdout = stdout_thread.join().unwrap_or_default();
+    let stderr = stderr_thread.join().unwrap_or_default();
+
+    if status.success() {
+        return Ok(KillProcessTreeResult::Killed);
+    }
+    if status.code() == Some(128) {
+        return Ok(KillProcessTreeResult::AlreadyExited);
+    }
+
+    let stdout = String::from_utf8_lossy(&stdout);
+    let stderr = String::from_utf8_lossy(&stderr);
+    Err(std::io::Error::other(format!(
+        "taskkill /PID {pid} /T /F failed with status {}: {}{}",
+        status,
+        stdout.trim(),
+        if stderr.trim().is_empty() {
+            String::new()
+        } else if stdout.trim().is_empty() {
+            stderr.trim().to_string()
+        } else {
+            format!("; {}", stderr.trim())
+        }
+    )))
+}
+
+fn wait_for_child_exit_after_failed_kill(
+    child: &mut std::process::Child,
+    timeout: std::time::Duration,
+) -> std::io::Result<Option<std::process::ExitStatus>> {
+    let start = std::time::Instant::now();
+    loop {
+        match child.try_wait()? {
+            Some(status) => return Ok(Some(status)),
+            None if start.elapsed() >= timeout => return Ok(None),
+            None => std::thread::sleep(MD2CF_CHECK_POLL_INTERVAL),
+        }
+    }
+}
+
+fn md2cf_timeout_message(stdout: &[u8], stderr: &[u8]) -> String {
+    if stdout.is_empty() && stderr.is_empty() {
+        "检测 md2cf 超时，将使用 REST API 直连模式。".to_string()
+    } else {
+        "检测 md2cf 超时；进程在被终止前已产生输出，可能接近完成，将使用 REST API 直连模式。"
+            .to_string()
+    }
+}
+
 /// Spawns `cmd`, polls with `try_wait()` at `MD2CF_CHECK_POLL_INTERVAL` until it exits or
 /// `timeout` elapses. On timeout, kills the child and returns `TimedOut`.
 ///
@@ -261,6 +396,8 @@ fn read_capped(mut reader: impl std::io::Read, cap: usize) -> Vec<u8> {
 /// `child.wait()` to collect its actual (non-killed) exit status instead of reporting a
 /// spurious timeout. Likewise, if `try_wait()` itself returns an `Err`, the child is killed and
 /// reaped before the error is propagated, so it is never leaked as an orphaned/zombie process.
+/// A real timeout-kill failure gets only a bounded secondary `try_wait()` window
+/// (`MD2CF_KILL_FAILURE_WAIT`); this path must never block indefinitely.
 fn run_command_with_timeout(
     mut cmd: std::process::Command,
     timeout: std::time::Duration,
@@ -270,6 +407,11 @@ fn run_command_with_timeout(
     cmd.stdin(std::process::Stdio::null());
     cmd.stdout(std::process::Stdio::piped());
     cmd.stderr(std::process::Stdio::piped());
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt as _;
+        cmd.process_group(0);
+    }
     let mut child = cmd.spawn()?;
 
     let stdout = child.stdout.take().expect("stdout was configured as piped");
@@ -281,8 +423,7 @@ fn run_command_with_timeout(
     loop {
         match child.try_wait() {
             Ok(Some(status)) => {
-                let stdout = stdout_thread.join().unwrap_or_default();
-                let stderr = stderr_thread.join().unwrap_or_default();
+                let (stdout, stderr) = join_child_output(stdout_thread, stderr_thread);
                 return Ok(CommandRunResult::Completed(std::process::Output {
                     status,
                     stdout,
@@ -291,23 +432,51 @@ fn run_command_with_timeout(
             }
             Ok(None) => {
                 if start.elapsed() >= timeout {
-                    match child.kill() {
-                        Ok(_) => {
+                    maybe_delay_before_timeout_kill();
+                    match kill_process_tree(&child) {
+                        Ok(KillProcessTreeResult::Killed) => {
                             let _ = child.wait()?;
-                            let _ = stdout_thread.join();
-                            let _ = stderr_thread.join();
-                            return Ok(CommandRunResult::TimedOut);
+                            let (stdout, stderr) = join_child_output(stdout_thread, stderr_thread);
+                            return Ok(CommandRunResult::TimedOut { stdout, stderr });
                         }
-                        Err(_kill_err) => {
+                        Ok(KillProcessTreeResult::AlreadyExited) => {
                             let status = child.wait()?;
-                            let stdout = stdout_thread.join().unwrap_or_default();
-                            let stderr = stderr_thread.join().unwrap_or_default();
+                            let (stdout, stderr) = join_child_output(stdout_thread, stderr_thread);
                             return Ok(CommandRunResult::Completed(std::process::Output {
                                 status,
                                 stdout,
                                 stderr,
                             }));
                         }
+                        Err(kill_error) => match wait_for_child_exit_after_failed_kill(
+                            &mut child,
+                            MD2CF_KILL_FAILURE_WAIT,
+                        )? {
+                            Some(status) => {
+                                let (stdout, stderr) =
+                                    join_child_output(stdout_thread, stderr_thread);
+                                return Ok(CommandRunResult::Completed(std::process::Output {
+                                    status,
+                                    stdout,
+                                    stderr,
+                                }));
+                            }
+                            None => {
+                                // The reader threads are intentionally left un-joined here: they
+                                // block on reading from pipes tied to a child we could not
+                                // confirm as terminated, so joining them could itself block
+                                // indefinitely (the very thing `MD2CF_KILL_FAILURE_WAIT` exists
+                                // to bound). They are effectively detached and will finish
+                                // whenever the pipes eventually close (child exit or output cap).
+                                return Err(std::io::Error::new(
+                                    kill_error.kind(),
+                                    format!(
+                                        "timed out, failed to terminate process tree, and could not confirm exit within {:?}: {}",
+                                        MD2CF_KILL_FAILURE_WAIT, kill_error
+                                    ),
+                                ));
+                            }
+                        },
                     }
                 }
                 std::thread::sleep(MD2CF_CHECK_POLL_INTERVAL);
@@ -350,10 +519,10 @@ pub fn check_md2cf_installed() -> CmdResult<Md2cfCheckResult> {
                 message,
             })
         }
-        Ok(CommandRunResult::TimedOut) => CmdResult::success(Md2cfCheckResult {
+        Ok(CommandRunResult::TimedOut { stdout, stderr }) => CmdResult::success(Md2cfCheckResult {
             installed: false,
             version: None,
-            message: "检测 md2cf 超时，将使用 REST API 直连模式。".to_string(),
+            message: md2cf_timeout_message(&stdout, &stderr),
         }),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             CmdResult::success(Md2cfCheckResult {
@@ -472,6 +641,12 @@ pub async fn test_confluence_connection(
             }
 
             if oversized {
+                loop {
+                    match response.chunk().await {
+                        Ok(Some(_)) => {}
+                        Ok(None) | Err(_) => break,
+                    }
+                }
                 return CmdResult::success(ConfluenceTestResult {
                     success: false,
                     message: "响应体超出大小限制，已中止读取。".to_string(),
@@ -655,11 +830,61 @@ fn first_non_empty_line(bytes: &[u8]) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_confluence_test_result, run_command_with_timeout, CommandRunResult};
+    use super::{
+        build_confluence_test_result, md2cf_timeout_message, run_command_with_timeout,
+        CommandRunResult, TEST_TIMEOUT_KILL_DELAY_MS,
+    };
     use reqwest::StatusCode;
     use serde_json::json;
+    use std::fs;
+    use std::path::PathBuf;
     use std::process::Command;
+    use std::sync::atomic::Ordering;
     use std::time::Duration;
+
+    static RUN_COMMAND_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    struct TimeoutKillDelayGuard {
+        _lock: std::sync::MutexGuard<'static, ()>,
+    }
+
+    impl TimeoutKillDelayGuard {
+        fn new(delay: Duration) -> Self {
+            let lock = RUN_COMMAND_TEST_LOCK
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            TEST_TIMEOUT_KILL_DELAY_MS.store(delay.as_millis() as u64, Ordering::SeqCst);
+            Self { _lock: lock }
+        }
+    }
+
+    impl Drop for TimeoutKillDelayGuard {
+        fn drop(&mut self) {
+            TEST_TIMEOUT_KILL_DELAY_MS.store(0, Ordering::SeqCst);
+        }
+    }
+
+    fn lock_run_command_tests() -> std::sync::MutexGuard<'static, ()> {
+        RUN_COMMAND_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn unique_test_artifact_path(label: &str) -> PathBuf {
+        let mut path = std::env::current_dir().expect("read current dir");
+        path.push("target");
+        path.push("config-command-tests");
+        fs::create_dir_all(&path).expect("create test artifact dir");
+        path.push(format!(
+            "{label}-{}-{}.txt",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("current time after unix epoch")
+                .as_nanos()
+        ));
+        path
+    }
 
     #[test]
     fn build_confluence_test_result_accepts_matching_key_json() {
@@ -812,21 +1037,23 @@ mod tests {
 
     #[test]
     fn run_command_with_timeout_completes_for_fast_command() {
+        let _guard = lock_run_command_tests();
         let result = run_command_with_timeout(fast_command(), Duration::from_millis(500))
             .expect("fast command should run");
 
         match result {
             CommandRunResult::Completed(output) => assert!(output.status.success()),
-            CommandRunResult::TimedOut => panic!("fast command unexpectedly timed out"),
+            CommandRunResult::TimedOut { .. } => panic!("fast command unexpectedly timed out"),
         }
     }
 
     #[test]
     fn run_command_with_timeout_times_out_for_slow_command() {
+        let _guard = lock_run_command_tests();
         let result = run_command_with_timeout(slow_command(), Duration::from_millis(200))
             .expect("slow command should spawn");
 
-        assert!(matches!(result, CommandRunResult::TimedOut));
+        assert!(matches!(result, CommandRunResult::TimedOut { .. }));
     }
 
     #[cfg(unix)]
@@ -849,6 +1076,7 @@ mod tests {
 
     #[test]
     fn run_command_with_timeout_drains_large_output_without_deadlocking() {
+        let _guard = lock_run_command_tests();
         let result = run_command_with_timeout(chatty_command(), Duration::from_secs(3))
             .expect("chatty command should run and be drained, not deadlock");
 
@@ -857,10 +1085,85 @@ mod tests {
                 assert!(output.status.success());
                 assert!(!output.stdout.is_empty());
             }
-            CommandRunResult::TimedOut => {
+            CommandRunResult::TimedOut { .. } => {
                 panic!("chatty command incorrectly timed out — stdout was not drained concurrently")
             }
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_command_with_timeout_kills_whole_process_group() {
+        let _guard = lock_run_command_tests();
+        let side_effect_path = unique_test_artifact_path("grandchild-survived");
+        let _ = fs::remove_file(&side_effect_path);
+
+        let mut command = Command::new("sh");
+        command
+            .env("SURVIVE_PATH", &side_effect_path)
+            .args(["-c", "(sleep 1; echo survived > \"$SURVIVE_PATH\") & sleep 5"]);
+
+        let result = run_command_with_timeout(command, Duration::from_millis(200))
+            .expect("wrapper command should spawn");
+
+        assert!(matches!(result, CommandRunResult::TimedOut { .. }));
+        std::thread::sleep(Duration::from_millis(1300));
+        assert!(
+            !side_effect_path.exists(),
+            "grandchild survived timeout and wrote {:?}",
+            side_effect_path
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_command_with_timeout_preserves_partial_stdout_on_timeout() {
+        let _guard = lock_run_command_tests();
+        let mut command = Command::new("sh");
+        command.args(["-c", "printf partial-output; sleep 2"]);
+
+        let result = run_command_with_timeout(command, Duration::from_millis(200))
+            .expect("command should spawn");
+
+        match result {
+            CommandRunResult::TimedOut { stdout, stderr } => {
+                assert_eq!(String::from_utf8_lossy(&stdout), "partial-output");
+                assert!(stderr.is_empty());
+            }
+            CommandRunResult::Completed(output) => {
+                panic!("command unexpectedly completed with status {}", output.status)
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_command_with_timeout_reports_completed_when_kill_races_natural_exit() {
+        let _delay_guard = TimeoutKillDelayGuard::new(Duration::from_millis(120));
+        let mut command = Command::new("sh");
+        command.args(["-c", "sleep 0.15"]);
+
+        let result = run_command_with_timeout(command, Duration::from_millis(100))
+            .expect("race command should spawn");
+
+        match result {
+            CommandRunResult::Completed(output) => assert!(output.status.success()),
+            CommandRunResult::TimedOut { .. } => {
+                panic!("race-to-exit command should resolve as completed")
+            }
+        }
+    }
+
+    #[test]
+    fn md2cf_timeout_message_changes_when_partial_output_exists() {
+        assert_eq!(
+            md2cf_timeout_message(b"", b""),
+            "检测 md2cf 超时，将使用 REST API 直连模式。"
+        );
+        assert_ne!(
+            md2cf_timeout_message(b"md2cf 1.0.0", b""),
+            "检测 md2cf 超时，将使用 REST API 直连模式。"
+        );
     }
 }
 
@@ -868,7 +1171,7 @@ mod tests {
 mod backend_integration_tests {
     use super::{
         is_missing_entry_error, test_confluence_connection, ConfluenceConnectionPayload,
-        ConfluenceTestResult,
+        ConfluenceTestResult, MAX_CONFLUENCE_TEST_BODY_BYTES,
     };
     use crate::commands::CmdResult;
     use keyring::Entry;
@@ -1013,6 +1316,61 @@ mod backend_integration_tests {
         (format!("http://{}", addr), handle)
     }
 
+    fn write_http_chunk(stream: &mut std::net::TcpStream, bytes: &[u8]) {
+        write!(stream, "{:X}\r\n", bytes.len()).expect("write mock chunk size");
+        stream.write_all(bytes).expect("write mock chunk body");
+        stream.write_all(b"\r\n").expect("write mock chunk trailer");
+        stream.flush().expect("flush mock chunk");
+    }
+
+    fn spawn_oversized_chunked_response_server(
+        tail_delay: Duration,
+    ) -> (String, JoinHandle<Vec<u8>>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind mock server");
+        listener
+            .set_nonblocking(true)
+            .expect("set mock server non-blocking");
+        let addr = listener.local_addr().expect("read mock server addr");
+        let handle = std::thread::spawn(move || {
+            const ACCEPT_TIMEOUT: Duration = Duration::from_secs(5);
+            let deadline = std::time::Instant::now() + ACCEPT_TIMEOUT;
+            let mut stream = loop {
+                match listener.accept() {
+                    Ok((stream, _)) => break stream,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        if std::time::Instant::now() >= deadline {
+                            panic!("mock server timed out waiting for a client connection");
+                        }
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(error) => panic!("failed to accept mock connection: {error}"),
+                }
+            };
+            stream
+                .set_nonblocking(false)
+                .expect("clear mock connection non-blocking flag");
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .expect("set mock connection read timeout");
+            let request = read_request_headers(&mut stream);
+            stream
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n",
+                )
+                .expect("write mock response headers");
+            write_http_chunk(&mut stream, &vec![b'a'; MAX_CONFLUENCE_TEST_BODY_BYTES]);
+            write_http_chunk(&mut stream, b"b");
+            std::thread::sleep(tail_delay);
+            write_http_chunk(&mut stream, b"tail-data");
+            stream
+                .write_all(b"0\r\n\r\n")
+                .expect("write mock chunked response terminator");
+            stream.flush().expect("flush mock response");
+            request
+        });
+        (format!("http://{}", addr), handle)
+    }
+
     fn payload_for(base_url: String) -> ConfluenceConnectionPayload {
         ConfluenceConnectionPayload {
             base_url,
@@ -1151,5 +1509,27 @@ mod backend_integration_tests {
         assert!(result
             .message
             .contains("响应内容不是有效的 Confluence 数据"));
+    }
+
+    #[tokio::test]
+    async fn test_confluence_connection_drains_oversized_response_before_returning() {
+        let _proxy_guard = allow_local_mock_server_without_proxy();
+        let tail_delay = Duration::from_millis(250);
+        let (base_url, handle) = spawn_oversized_chunked_response_server(tail_delay);
+        let start = std::time::Instant::now();
+
+        let result = unwrap_test_result(test_confluence_connection(payload_for(base_url)).await);
+        let elapsed = start.elapsed();
+        let _ = handle.join().expect("join mock server");
+
+        assert!(!result.success);
+        assert_eq!(result.status_code, Some(200));
+        assert_eq!(result.message, "响应体超出大小限制，已中止读取。");
+        assert!(
+            elapsed >= tail_delay,
+            "oversized response returned before the delayed tail could be drained: {:?} < {:?}",
+            elapsed,
+            tail_delay
+        );
     }
 }

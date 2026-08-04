@@ -654,7 +654,8 @@ resolution: already resolved: src-tauri/src/commands/config.rs:275-278 spawns st
 origin: migrated from legacy ledger ("_bmad-output/implementation-artifacts/spec-11-2-confluence-network-and-process-resilience.md"), 2026-08-04
 location: src-tauri/src/commands/config.rs (run_command_with_timeout)
 reason: On timeout, `run_command_with_timeout` only kills the immediate child process; if `md2cf` is a wrapper script that spawns further subprocesses, those descendants are not reaped and can keep running after `check_md2cf_installed` has already returned a timeout result. Confirmed by independent review (Blind Hunter): `child.kill()` targets only the direct child PID with no process-group/tree termination, so any grandchild processes spawned by a wrapper `md2cf` binary would survive past the reported timeout.
-status: open
+status: done 2026-08-04
+resolution: resolved by sweep bundle dw-md2cf-timeout-process-robustness
 
 ### DW-88: The `confluenceFormDirty` dirty-form guard in `SettingsModal.vue` depends on toggling `suppressConfluenceDirtyTracking` around synchronous field as...
 
@@ -668,7 +669,8 @@ status: open
 origin: migrated from legacy ledger ("_bmad-output/implementation-artifacts/spec-11-2-confluence-network-and-process-resilience.md"), 2026-08-04
 location: src-tauri/src/commands/config.rs (run_command_with_timeout)
 reason: On timeout, `run_command_with_timeout` in `src-tauri/src/commands/config.rs` discards any partial stdout/stderr the `md2cf` process produced before being killed, so the user-facing message cannot distinguish "genuinely hung" from "was about to finish" — it always reports a generic timeout. Confirmed by independent review (Blind Hunter): the timeout branch calls `child.kill()` then `child.wait()` and never surfaces the drained stdout/stderr threads' partial buffers in the resulting message.
-status: open
+status: done 2026-08-04
+resolution: resolved by sweep bundle dw-md2cf-timeout-process-robustness
 
 ### DW-90: The new `response.chunk()`-based streaming body read and 1 MiB cap in `test_confluence_connection`, and the `Completed`/`TimedOut`/`NotFound` resul...
 
@@ -682,14 +684,16 @@ status: open
 origin: migrated from legacy ledger ("_bmad-output/implementation-artifacts/spec-11-2-confluence-network-and-process-resilience.md"), 2026-08-04
 location: src-tauri/src/commands/config.rs (test_confluence_connection)
 reason: When the 1 MiB body cap is hit in `test_confluence_connection`, the function returns immediately without reading/discarding the remainder of the HTTP response stream, which may prevent the underlying connection from being returned to reqwest's connection pool for reuse. Confirmed by independent review (Blind Hunter): the `oversized` branch calls `return` directly after `break`, with no drain of the remaining `response.chunk()` stream before the response value is dropped.
-status: open
+status: done 2026-08-04
+resolution: resolved by sweep bundle dw-md2cf-timeout-process-robustness
 
 ### DW-92: If `child.kill()` in `run_command_with_timeout` fails for a reason other than "process already exited in the race window" (e.g. an OS-level permiss...
 
 origin: migrated from legacy ledger ("_bmad-output/implementation-artifacts/spec-11-2-confluence-network-and-process-resilience.md"), 2026-08-04
 location: src-tauri/src/commands/config.rs (run_command_with_timeout)
 reason: If `child.kill()` in `run_command_with_timeout` fails for a reason other than "process already exited in the race window" (e.g. an OS-level permission error), the subsequent `child.wait()` could theoretically block indefinitely if the process is actually still alive, defeating the intended timeout bound. Confirmed by independent review (Edge Case Hunter): the `Err(_kill_err)` branch unconditionally calls `child.wait()` with no secondary timeout guard. Considered very low real-world probability since the process is a direct child owned by the calling process, but not provably impossible on all platforms.
-status: open
+status: done 2026-08-04
+resolution: resolved by sweep bundle dw-md2cf-timeout-process-robustness
 
 ### DW-93: The new Rust `keyring_entry_round_trips_without_touching_production_credential` integration test depends on a real OS credential-store backend bein...
 
