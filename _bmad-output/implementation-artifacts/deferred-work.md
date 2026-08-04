@@ -773,7 +773,8 @@ status: open
 origin: migrated from legacy ledger ("_bmad-output/implementation-artifacts/spec-12-2-markdown-asset-parser-edge-cases.md"), 2026-08-04
 location: src/lib/image-assets.ts (extractAssetReferences / extractSiblingImageReferences)
 reason: CommonMark's angle-bracket link destination form (e.g. `![alt](<./assets/pic.png>)` or `![alt](<./pic.png>)`) is not recognized by either extraction function, so an asset or sibling image referenced only via that syntax is silently skipped during "Save As" migration. Confirmed by independent review (Blind Hunter): none of the regex patterns in `extractAssetReferences`/`extractSiblingImageReferences` account for a `<...>`-wrapped destination. Pre-existing gap (this destination form was never supported before this story); out of this story's explicit scope, which targeted only the HTML `<img>`, reference-style, query/fragment, and fenced-code-block issues enumerated by DW-80/81/82.
-status: open
+status: done 2026-08-04
+resolution: resolved by sweep bundle dw-markdown-fence-linkdest-fixes
 
 ### DW-104: `replaceAssetReferenceFilename` and `replaceSiblingImageReferenceFilename` only probe the raw filename and its uppercase-hex `encodeURIComponent` v...
 
@@ -796,7 +797,8 @@ resolution: resolved by sweep bundle dw-asset-replace-function-edge-cases
 origin: migrated from legacy ledger ("_bmad-output/implementation-artifacts/spec-12-2-markdown-asset-parser-edge-cases.md"), 2026-08-04
 location: src/lib/image-assets.ts (stripFencedCodeBlocks / getFenceInfo)
 reason: `stripFencedCodeBlocks`'s `getFenceInfo` treats any line starting with 3+ backticks as a valid fence opener even when the info string after the backtick run itself contains a backtick (e.g. ` ```bad`info `), whereas CommonMark specifies a backtick-fenced code block's info string must not contain a backtick, so such a malformed-looking line is incorrectly accepted as a real fence and can cause following content to be blanked out or a real closing fence to be mismatched. Confirmed by independent review (Blind Hunter and Edge Case Hunter, pass 3): `getFenceInfo` only validates the leading run length (`length >= 3`) and does not inspect `rest` for a backtick when `char === '`'`, unlike the CommonMark fenced-code-block spec. Narrow edge case (a backtick appearing in an otherwise-fence-like line's trailing text) with low real-world likelihood in typical note documents; not part of this story's explicit scope (DW-80/81/82).
-status: open
+status: done 2026-08-04
+resolution: resolved by sweep bundle dw-markdown-fence-linkdest-fixes
 
 ### DW-107: The new `story-12-3.spec.ts` restore path only exercises the successful-restore branch; it does not cover the stale-config cleanup path where `read...
 
@@ -839,3 +841,7 @@ origin: migrated from legacy ledger ("_bmad-output/implementation-artifacts/spec
 location: src-tauri/src/commands (write_export_file)
 reason: The new `write_export_file` Tauri command is a generic file-write primitive (any `target_path`/`content`) with no export-specific guardrails (e.g. restricting to `.html` extensions or validating the path isn't inside a sensitive directory), broadening the frontend-invokable API surface beyond strictly what HTML export needs. Confirmed by independent review (Blind Hunter). This story's spec scoped `write_export_file` only to mirror `save_document_as`'s write semantics minus the asset-scope widening (DW-72); adding path/extension validation was not in scope and risks over-specifying "how" per the spec template's guidance.
 status: open
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-dw-103-106-markdown-fence-linkdest-fixes.md`
+  summary: Angle-bracket link/image destinations (`<...>`) do not support CommonMark's backslash-escaped `>` (e.g. `<./assets/foo\>.png>` for a literal `>` in a filename) in either extraction (`extractAssetReferences`/`extractSiblingImageReferences`) or rewrite (`replaceAssetReferenceFilename`/`replaceSiblingImageReferenceFilename`).
+  evidence: Confirmed via inspection of the new regexes in `src/lib/image-assets.ts` (all four use `[^>\r\n]` character classes with no `\\>` escape handling), and via independent review (Edge Case Hunter, review pass 2). Narrow in practice since filenames containing a literal `>` are extremely rare, but a real CommonMark-conformance gap left open by this story since DW-103's scope was limited to the plain angle-bracket form.

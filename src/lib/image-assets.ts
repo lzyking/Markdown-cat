@@ -107,7 +107,12 @@ function getFenceInfo(line: string): { char: '`' | '~'; length: number; rest: st
     return null
   }
 
-  return { char, length, rest: line.slice(end) }
+  const rest = line.slice(end)
+  if (char === '`' && rest.includes('`')) {
+    return null
+  }
+
+  return { char, length, rest }
 }
 
 function stripFencedCodeBlocks(markdown: string): string {
@@ -249,7 +254,9 @@ export function extractAssetReferences(markdown: string): string[] {
   const sanitizedMarkdown = stripFencedCodeBlocks(markdown)
   const patterns = [
     /!\[[^\]]*\]\(\s*(?:\.\/)?assets\/([^)\s]+?)(?=\s+(?:"[^"]*"|'[^']*'|\([^)]*\))|\s*\))/g,
+    /!\[[^\]]*\]\(\s*<(?:\.\/)?assets\/([^>\r\n]+?)>(?=\s+(?:"[^"]*"|'[^']*'|\([^)]*\))|\s*\))/g,
     /^\s*\[[^\]]+\]:\s*(?:\.\/)?assets\/([^\s]+)(?=\s+(?:"[^"]*"|'[^']*'|\([^)]*\))|\s*$)/gm,
+    /^\s*\[[^\]]+\]:\s*<(?:\.\/)?assets\/([^>\r\n]+)>(?=\s+(?:"[^"]*"|'[^']*'|\([^)]*\))|\s*$)/gm,
     /<img\b[^>]*\bsrc\s*=\s*(?:"(?:\.\/)?assets\/([^"]+)"|'(?:\.\/)?assets\/([^']+)'|(?:\.\/)?assets\/([^\s"'=<>`/]+))/gi,
   ]
 
@@ -292,7 +299,9 @@ export function extractSiblingImageReferences(markdown: string): string[] {
   const sanitizedMarkdown = stripFencedCodeBlocks(markdown)
   const patterns = [
     /!\[[^\]]*\]\(\s*\.\/([^\)\s/\\]+?)(?=\s+(?:"[^"]*"|'[^']*'|\([^)]*\))|\s*\))/g,
+    /!\[[^\]]*\]\(\s*<\.\/([^>\r\n]+?)>(?=\s+(?:"[^"]*"|'[^']*'|\([^)]*\))|\s*\))/g,
     /^\s*\[[^\]]+\]:\s*\.\/([^\s/\\]+)(?=\s+(?:"[^"]*"|'[^']*'|\([^)]*\))|\s*$)/gm,
+    /^\s*\[[^\]]+\]:\s*<\.\/([^>\r\n]+)>(?=\s+(?:"[^"]*"|'[^']*'|\([^)]*\))|\s*$)/gm,
     /<img\b[^>]*\bsrc\s*=\s*(?:"\.\/([^"]+)"|'\.\/([^']+)'|\.\/([^\s"'=<>`/]+))/gi,
   ]
   const names = new Set<string>()
@@ -339,7 +348,15 @@ export function replaceAssetReferenceFilename(markdown: string, oldFilename: str
           (_, prefix: string, assetPrefix: string, suffix: string) => `${prefix}${assetPrefix}${newVariant}${suffix}`,
         )
         .replace(
+          new RegExp(`(!\\[[^\\]]*\\]\\(\\s*<)(\\.\\/assets\\/|assets\\/)${escaped}((?:\\?[^>\\s#]*)?(?:#[^>\\s]*)?>)(?=(?:\\s+["'(]|\\s*\\)))`, 'g'),
+          (_, prefix: string, assetPrefix: string, suffix: string) => `${prefix}${assetPrefix}${newVariant}${suffix}`,
+        )
+        .replace(
           new RegExp(`^(\\s*\\[[^\\]]+\\]:\\s*)(\\.\\/assets\\/|assets\\/)${escaped}((?:\\?[^\\s#]*)?(?:#[^\\s]*)?)(?=(?:\\s+["'(]|\\s*$))`, 'gm'),
+          (_, prefix: string, assetPrefix: string, suffix: string) => `${prefix}${assetPrefix}${newVariant}${suffix}`,
+        )
+        .replace(
+          new RegExp(`^(\\s*\\[[^\\]]+\\]:\\s*<)(\\.\\/assets\\/|assets\\/)${escaped}((?:\\?[^>\\s#]*)?(?:#[^>\\s]*)?>)(?=(?:\\s+["'(]|\\s*$))`, 'gm'),
           (_, prefix: string, assetPrefix: string, suffix: string) => `${prefix}${assetPrefix}${newVariant}${suffix}`,
         )
         .replace(
@@ -373,7 +390,15 @@ export function replaceSiblingImageReferenceFilename(markdown: string, oldFilena
           (_, prefix: string, suffix: string) => `${prefix}${newVariant}${suffix}`,
         )
         .replace(
+          new RegExp(`(!\\[[^\\]]*\\]\\(\\s*<\\.\\/)${escaped}((?:\\?[^>\\s#]*)?(?:#[^>\\s]*)?>)(?=(?:\\s+["'(]|\\s*\\)))`, 'g'),
+          (_, prefix: string, suffix: string) => `${prefix}${newVariant}${suffix}`,
+        )
+        .replace(
           new RegExp(`^(\\s*\\[[^\\]]+\\]:\\s*\\.\\/)${escaped}((?:\\?[^\\s#]*)?(?:#[^\\s]*)?)(?=(?:\\s+["'(]|\\s*$))`, 'gm'),
+          (_, prefix: string, suffix: string) => `${prefix}${newVariant}${suffix}`,
+        )
+        .replace(
+          new RegExp(`^(\\s*\\[[^\\]]+\\]:\\s*<\\.\\/)${escaped}((?:\\?[^>\\s#]*)?(?:#[^>\\s]*)?>)(?=(?:\\s+["'(]|\\s*$))`, 'gm'),
           (_, prefix: string, suffix: string) => `${prefix}${newVariant}${suffix}`,
         )
         .replace(
