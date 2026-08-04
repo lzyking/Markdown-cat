@@ -147,6 +147,60 @@ function stripFencedCodeBlocks(markdown: string): string {
   return stripped.join('')
 }
 
+function mapOutsideFencedCodeBlocks(markdown: string, transform: (segment: string) => string): string {
+  const parts = markdown.split(/(\r?\n)/)
+  const mapped: string[] = []
+  let activeFence: { char: '`' | '~'; length: number } | null = null
+  let currentMode: 'protected' | 'transform' | null = null
+  let currentParts: string[] = []
+
+  const flush = () => {
+    if (!currentMode) {
+      return
+    }
+
+    const segment = currentParts.join('')
+    mapped.push(currentMode === 'transform' ? transform(segment) : segment)
+    currentMode = null
+    currentParts = []
+  }
+
+  for (let index = 0; index < parts.length; index += 2) {
+    const line = parts[index] ?? ''
+    const newline = parts[index + 1] ?? ''
+
+    let mode: 'protected' | 'transform' = 'transform'
+    if (!activeFence) {
+      const openingFence = getFenceInfo(line)
+      if (openingFence) {
+        activeFence = { char: openingFence.char, length: openingFence.length }
+        mode = 'protected'
+      }
+    } else {
+      mode = 'protected'
+      const closingFence = getFenceInfo(line)
+      if (
+        closingFence
+        && closingFence.char === activeFence.char
+        && closingFence.length >= activeFence.length
+        && /^[ \t]*$/.test(closingFence.rest)
+      ) {
+        activeFence = null
+      }
+    }
+
+    if (currentMode !== mode) {
+      flush()
+      currentMode = mode
+    }
+
+    currentParts.push(line, newline)
+  }
+
+  flush()
+  return mapped.join('')
+}
+
 function stripQueryAndFragment(rawCandidate: string): string {
   const queryIndex = rawCandidate.indexOf('?')
   const fragmentIndex = rawCandidate.indexOf('#')
@@ -161,6 +215,31 @@ export function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
+function lowercasePercentHex(value: string): string {
+  return value.replace(/%[0-9A-Fa-f]{2}/g, (match) => match.toLowerCase())
+}
+
+function getReplacementVariantPairs(oldFilename: string, newFilename: string): Array<[string, string]> {
+  const pairs: Array<[string, string]> = [
+    [oldFilename, newFilename],
+    [encodeURIComponent(oldFilename), encodeURIComponent(newFilename)],
+    [lowercasePercentHex(encodeURIComponent(oldFilename)), lowercasePercentHex(encodeURIComponent(newFilename))],
+  ]
+  const deduped: Array<[string, string]> = []
+  const seen = new Set<string>()
+
+  for (const [oldVariant, newVariant] of pairs) {
+    if (seen.has(oldVariant)) {
+      continue
+    }
+
+    seen.add(oldVariant)
+    deduped.push([oldVariant, newVariant])
+  }
+
+  return deduped
+}
+
 /**
  * 从 Markdown 文本中提取指向 `./assets/<filename>` / `assets/<filename>` 的图片引用文件名。
  * 用于“另存为”时判断是否需要将暂存资源迁移到新目录。
@@ -171,7 +250,7 @@ export function extractAssetReferences(markdown: string): string[] {
   const patterns = [
     /!\[[^\]]*\]\(\s*(?:\.\/)?assets\/([^)\s]+?)(?=\s+(?:"[^"]*"|'[^']*'|\([^)]*\))|\s*\))/g,
     /^\s*\[[^\]]+\]:\s*(?:\.\/)?assets\/([^\s]+)(?=\s+(?:"[^"]*"|'[^']*'|\([^)]*\))|\s*$)/gm,
-    /<img\b[^>]*\bsrc\s*=\s*(?:"(?:\.\/)?assets\/([^"]+)"|'(?:\.\/)?assets\/([^']+)'|(?:\.\/)?assets\/([^\s"'=<>`]+))/gi,
+    /<img\b[^>]*\bsrc\s*=\s*(?:"(?:\.\/)?assets\/([^"]+)"|'(?:\.\/)?assets\/([^']+)'|(?:\.\/)?assets\/([^\s"'=<>`/]+))/gi,
   ]
 
   for (const pattern of patterns) {
@@ -214,7 +293,7 @@ export function extractSiblingImageReferences(markdown: string): string[] {
   const patterns = [
     /!\[[^\]]*\]\(\s*\.\/([^\)\s/\\]+?)(?=\s+(?:"[^"]*"|'[^']*'|\([^)]*\))|\s*\))/g,
     /^\s*\[[^\]]+\]:\s*\.\/([^\s/\\]+)(?=\s+(?:"[^"]*"|'[^']*'|\([^)]*\))|\s*$)/gm,
-    /<img\b[^>]*\bsrc\s*=\s*(?:"\.\/([^"]+)"|'\.\/([^']+)'|\.\/([^\s"'=<>`]+))/gi,
+    /<img\b[^>]*\bsrc\s*=\s*(?:"\.\/([^"]+)"|'\.\/([^']+)'|\.\/([^\s"'=<>`/]+))/gi,
   ]
   const names = new Set<string>()
 
@@ -246,34 +325,34 @@ export function replaceAssetReferenceFilename(markdown: string, oldFilename: str
     return markdown
   }
 
-  let result = markdown
-  // A reference may appear in its raw form or percent-encoded (e.g. a filename
-  // with spaces written as "%20"); the extractor decodes both to the same
-  // logical name, so the replacement must be able to find and rewrite either
-  // spelling, not just the decoded one.
-  const variants = new Set([oldFilename, encodeURIComponent(oldFilename)])
-  for (const oldVariant of variants) {
-    const escaped = escapeRegExp(oldVariant)
-    const newVariant = oldVariant === oldFilename ? newFilename : encodeURIComponent(newFilename)
-    result = result
-      .replace(
-        new RegExp(`(!\\[[^\\]]*\\]\\(\\s*)(\\.\\/assets\\/|assets\\/)${escaped}((?:\\?[^)\\s#]*)?(?:#[^)\\s]*)?)(?=(?:\\s+["'(]|\\s*\\)))`, 'g'),
-        (_, prefix: string, assetPrefix: string, suffix: string) => `${prefix}${assetPrefix}${newVariant}${suffix}`,
-      )
-      .replace(
-        new RegExp(`^(\\s*\\[[^\\]]+\\]:\\s*)(\\.\\/assets\\/|assets\\/)${escaped}((?:\\?[^\\s#]*)?(?:#[^\\s]*)?)(?=(?:\\s+["'(]|\\s*$))`, 'gm'),
-        (_, prefix: string, assetPrefix: string, suffix: string) => `${prefix}${assetPrefix}${newVariant}${suffix}`,
-      )
-      .replace(
-        new RegExp(`(<img\\b[^>]*\\bsrc\\s*=\\s*["'])(\\.\\/assets\\/|assets\\/)${escaped}((?:\\?[^"'#]*)?(?:#[^"']*)?)(?=["'])`, 'gi'),
-        (_, prefix: string, assetPrefix: string, suffix: string) => `${prefix}${assetPrefix}${newVariant}${suffix}`,
-      )
-      .replace(
-        new RegExp(`(<img\\b[^>]*\\bsrc\\s*=\\s*)(\\.\\/assets\\/|assets\\/)${escaped}((?:\\?[^\\s>#]*)?(?:#[^\\s>]*)?)(?=[\\s>])`, 'gi'),
-        (_, prefix: string, assetPrefix: string, suffix: string) => `${prefix}${assetPrefix}${newVariant}${suffix}`,
-      )
-  }
-  return result
+  return mapOutsideFencedCodeBlocks(markdown, (segment) => {
+    let result = segment
+    // A reference may appear in its raw form or percent-encoded (e.g. a filename
+    // with spaces written as "%20"); the extractor decodes both to the same
+    // logical name, so the replacement must be able to find and rewrite either
+    // spelling, not just the decoded one.
+    for (const [oldVariant, newVariant] of getReplacementVariantPairs(oldFilename, newFilename)) {
+      const escaped = escapeRegExp(oldVariant)
+      result = result
+        .replace(
+          new RegExp(`(!\\[[^\\]]*\\]\\(\\s*)(\\.\\/assets\\/|assets\\/)${escaped}((?:\\?[^)\\s#]*)?(?:#[^)\\s]*)?)(?=(?:\\s+["'(]|\\s*\\)))`, 'g'),
+          (_, prefix: string, assetPrefix: string, suffix: string) => `${prefix}${assetPrefix}${newVariant}${suffix}`,
+        )
+        .replace(
+          new RegExp(`^(\\s*\\[[^\\]]+\\]:\\s*)(\\.\\/assets\\/|assets\\/)${escaped}((?:\\?[^\\s#]*)?(?:#[^\\s]*)?)(?=(?:\\s+["'(]|\\s*$))`, 'gm'),
+          (_, prefix: string, assetPrefix: string, suffix: string) => `${prefix}${assetPrefix}${newVariant}${suffix}`,
+        )
+        .replace(
+          new RegExp(`(<img\\b[^>]*\\bsrc\\s*=\\s*["'])(\\.\\/assets\\/|assets\\/)${escaped}((?:\\?[^"'#]*)?(?:#[^"']*)?)(?=["'])`, 'gi'),
+          (_, prefix: string, assetPrefix: string, suffix: string) => `${prefix}${assetPrefix}${newVariant}${suffix}`,
+        )
+        .replace(
+          new RegExp(`(<img\\b[^>]*\\bsrc\\s*=\\s*)(\\.\\/assets\\/|assets\\/)${escaped}((?:\\?[^\\s>#]*)?(?:#[^\\s>]*)?)(?=\\/?>|\\s)`, 'gi'),
+          (_, prefix: string, assetPrefix: string, suffix: string) => `${prefix}${assetPrefix}${newVariant}${suffix}`,
+        )
+    }
+    return result
+  })
 }
 
 export function replaceSiblingImageReferenceFilename(markdown: string, oldFilename: string, newFilename: string): string {
@@ -281,33 +360,33 @@ export function replaceSiblingImageReferenceFilename(markdown: string, oldFilena
     return markdown
   }
 
-  let result = markdown
-  // Mirrors `replaceAssetReferenceFilename`'s raw + percent-encoded variant
-  // handling, so a sibling image reference written with an encoded filename
-  // (e.g. spaces as "%20") is rewritten too instead of being left stale.
-  const variants = new Set([oldFilename, encodeURIComponent(oldFilename)])
-  for (const oldVariant of variants) {
-    const escaped = escapeRegExp(oldVariant)
-    const newVariant = oldVariant === oldFilename ? newFilename : encodeURIComponent(newFilename)
-    result = result
-      .replace(
-        new RegExp(`(!\\[[^\\]]*\\]\\(\\s*\\.\\/)${escaped}((?:\\?[^)\\s#]*)?(?:#[^)\\s]*)?)(?=(?:\\s+["'(]|\\s*\\)))`, 'g'),
-        (_, prefix: string, suffix: string) => `${prefix}${newVariant}${suffix}`,
-      )
-      .replace(
-        new RegExp(`^(\\s*\\[[^\\]]+\\]:\\s*\\.\\/)${escaped}((?:\\?[^\\s#]*)?(?:#[^\\s]*)?)(?=(?:\\s+["'(]|\\s*$))`, 'gm'),
-        (_, prefix: string, suffix: string) => `${prefix}${newVariant}${suffix}`,
-      )
-      .replace(
-        new RegExp(`(<img\\b[^>]*\\bsrc\\s*=\\s*["']\\.\\/)${escaped}((?:\\?[^"'#]*)?(?:#[^"']*)?)(?=["'])`, 'gi'),
-        (_, prefix: string, suffix: string) => `${prefix}${newVariant}${suffix}`,
-      )
-      .replace(
-        new RegExp(`(<img\\b[^>]*\\bsrc\\s*=\\s*\\.\\/)${escaped}((?:\\?[^\\s>#]*)?(?:#[^\\s>]*)?)(?=[\\s>])`, 'gi'),
-        (_, prefix: string, suffix: string) => `${prefix}${newVariant}${suffix}`,
-      )
-  }
-  return result
+  return mapOutsideFencedCodeBlocks(markdown, (segment) => {
+    let result = segment
+    // Mirrors `replaceAssetReferenceFilename`'s raw + percent-encoded variant
+    // handling, so a sibling image reference written with an encoded filename
+    // (e.g. spaces as "%20") is rewritten too instead of being left stale.
+    for (const [oldVariant, newVariant] of getReplacementVariantPairs(oldFilename, newFilename)) {
+      const escaped = escapeRegExp(oldVariant)
+      result = result
+        .replace(
+          new RegExp(`(!\\[[^\\]]*\\]\\(\\s*\\.\\/)${escaped}((?:\\?[^)\\s#]*)?(?:#[^)\\s]*)?)(?=(?:\\s+["'(]|\\s*\\)))`, 'g'),
+          (_, prefix: string, suffix: string) => `${prefix}${newVariant}${suffix}`,
+        )
+        .replace(
+          new RegExp(`^(\\s*\\[[^\\]]+\\]:\\s*\\.\\/)${escaped}((?:\\?[^\\s#]*)?(?:#[^\\s]*)?)(?=(?:\\s+["'(]|\\s*$))`, 'gm'),
+          (_, prefix: string, suffix: string) => `${prefix}${newVariant}${suffix}`,
+        )
+        .replace(
+          new RegExp(`(<img\\b[^>]*\\bsrc\\s*=\\s*["']\\.\\/)${escaped}((?:\\?[^"'#]*)?(?:#[^"']*)?)(?=["'])`, 'gi'),
+          (_, prefix: string, suffix: string) => `${prefix}${newVariant}${suffix}`,
+        )
+        .replace(
+          new RegExp(`(<img\\b[^>]*\\bsrc\\s*=\\s*\\.\\/)${escaped}((?:\\?[^\\s>#]*)?(?:#[^\\s>]*)?)(?=\\/?>|\\s)`, 'gi'),
+          (_, prefix: string, suffix: string) => `${prefix}${newVariant}${suffix}`,
+        )
+    }
+    return result
+  })
 }
 
 export function resolveRelativeAssetPath(baseDir: string, assetPath: string): string {

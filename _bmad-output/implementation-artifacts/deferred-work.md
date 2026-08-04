@@ -751,7 +751,8 @@ status: open
 origin: migrated from legacy ledger ("_bmad-output/implementation-artifacts/spec-12-2-markdown-asset-parser-edge-cases.md"), 2026-08-04
 location: src/lib/image-assets.ts (replaceAssetReferenceFilename / replaceSiblingImageReferenceFilename)
 reason: Neither `replaceAssetReferenceFilename` nor `replaceSiblingImageReferenceFilename` skips fenced code blocks during rewrite, unlike the extraction functions, so a filename coincidentally reused inside a documentation code example could be silently mutated whenever an unrelated real reference with the same filename is renamed. Confirmed by independent review (Blind Hunter): `stripFencedCodeBlocks` is only applied inside `extractAssetReferences`/`extractSiblingImageReferences`; the replace functions run their regexes against the raw, unstripped markdown, so any occurrence of the literal old filename anywhere in the document — including inside a ```` ``` ````/`~~~` fenced example — gets rewritten during a rename. Pre-existing characteristic of `replaceAssetReferenceFilename` for the `assets/` case (predates this story); newly inherited by the extended `replaceSiblingImageReferenceFilename`.
-status: open
+status: done 2026-08-04
+resolution: resolved by sweep bundle dw-asset-replace-function-edge-cases
 
 ### DW-101: Inline (single-backtick) code spans, e.g. `` `![alt](./assets/pic.png)` ``, are still treated as live asset/sibling-image references by both extrac...
 
@@ -779,14 +780,16 @@ status: open
 origin: migrated from legacy ledger ("_bmad-output/implementation-artifacts/spec-12-2-markdown-asset-parser-edge-cases.md"), 2026-08-04
 location: src/lib/image-assets.ts (replaceAssetReferenceFilename / replaceSiblingImageReferenceFilename)
 reason: `replaceAssetReferenceFilename` and `replaceSiblingImageReferenceFilename` only probe the raw filename and its uppercase-hex `encodeURIComponent` variant when locating a reference to rewrite, so a filename that appears in the document lowercase-percent-encoded (e.g. `./%e4%bd%a0.png` instead of `./%E4%BD%A0.png`) is correctly extracted but never located/rewritten during rename. Confirmed by independent review (Blind Hunter): both replace functions build their `variants` Set from `[oldFilename, encodeURIComponent(oldFilename)]`; `encodeURIComponent` always emits uppercase hex digits, so a document using lowercase percent-encoding for the same logical filename won't match either variant. Pre-existing characteristic of `replaceAssetReferenceFilename` (predates this story); newly inherited by the extended `replaceSiblingImageReferenceFilename`.
-status: open
+status: done 2026-08-04
+resolution: resolved by sweep bundle dw-asset-replace-function-edge-cases
 
 ### DW-105: The unquoted `<img src=...>` pattern in both extraction functions and both replace functions does not account for a self-closing XHTML-style slash ...
 
 origin: migrated from legacy ledger ("_bmad-output/implementation-artifacts/spec-12-2-markdown-asset-parser-edge-cases.md"), 2026-08-04
 location: src/lib/image-assets.ts (extractAssetReferences / extractSiblingImageReferences / replace functions)
 reason: The unquoted `<img src=...>` pattern in both extraction functions and both replace functions does not account for a self-closing XHTML-style slash immediately before the closing `>` (e.g. `<img src=./assets/pic.png/>`), so the trailing `/` gets swept into the captured filename, the candidate is then rejected by the existing "no `/` in filename" validation, and the reference is silently skipped instead of extracted/renamed. Confirmed by independent review (Blind Hunter, pass 2): the unquoted-src character class `[^\s"'=<>`]+` does not exclude `/`, so `<img src=./assets/pic.png/>` captures `pic.png/` as the raw candidate; `extractAssetReferences`'s existing traversal check (`!candidate.includes('/')`) then drops it entirely. Pre-existing characteristic of the unquoted-`<img>` pattern in `extractAssetReferences` (predates this story); inherited by the newly mirrored sibling pattern per this story's explicit "mirror `extractAssetReferences`'s pattern structure" directive.
-status: open
+status: done 2026-08-04
+resolution: resolved by sweep bundle dw-asset-replace-function-edge-cases
 
 ### DW-106: `stripFencedCodeBlocks`'s `getFenceInfo` treats any line starting with 3+ backticks as a valid fence opener even when the info string after the bac...
 

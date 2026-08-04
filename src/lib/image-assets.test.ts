@@ -118,6 +118,47 @@ test('rewrites asset reference filenames across all supported forms, encoded var
   assert.equal(replaceAssetReferenceFilename(original, 'old name.png', 'new name.png'), expected)
 })
 
+test('rewrites asset references outside fenced code blocks only', () => {
+  const original = [
+    '![real](./assets/pic.png)',
+    '```md',
+    '![example](./assets/pic.png)',
+    '<img src="./assets/pic.png">',
+    '```',
+  ].join('\n')
+
+  const expected = [
+    '![real](./assets/new.png)',
+    '```md',
+    '![example](./assets/pic.png)',
+    '<img src="./assets/pic.png">',
+    '```',
+  ].join('\n')
+
+  assert.equal(replaceAssetReferenceFilename(original, 'pic.png', 'new.png'), expected)
+})
+
+test('rewrites lowercase percent-encoded asset references', () => {
+  const original = '![alt](./assets/%e4%bd%a0.png)'
+  const expected = '![alt](./assets/%e4%bb%96.png)'
+
+  assert.equal(replaceAssetReferenceFilename(original, '你.png', '他.png'), expected)
+})
+
+test('preserves uppercase percent-encoded asset replacement behavior', () => {
+  const original = '![alt](./assets/%E4%BD%A0.png)'
+  const expected = '![alt](./assets/%E4%BB%96.png)'
+
+  assert.equal(replaceAssetReferenceFilename(original, '你.png', '他.png'), expected)
+})
+
+test('extracts and rewrites self-closing unquoted asset img src references', () => {
+  const original = '<img src=./assets/pic.png/>'
+
+  assert.deepEqual(extractAssetReferences(original), ['pic.png'])
+  assert.equal(replaceAssetReferenceFilename(original, 'pic.png', 'new.png'), '<img src=./assets/new.png/>')
+})
+
 test('rewrites sibling image filenames across all supported forms, encoded variants, and preserved suffixes', () => {
   const original = [
     '![inline](./old name.png)',
@@ -138,4 +179,31 @@ test('rewrites sibling image filenames across all supported forms, encoded varia
   ].join('\n')
 
   assert.equal(replaceSiblingImageReferenceFilename(original, 'old name.png', 'new name.png'), expected)
+})
+
+test('rewrites sibling image references outside fenced code blocks only', () => {
+  const original = [
+    '![real](./pic.png)',
+    '~~~md',
+    '![example](./pic.png)',
+    '<img src="./pic.png">',
+    '~~~',
+  ].join('\n')
+
+  const expected = [
+    '![real](./new.png)',
+    '~~~md',
+    '![example](./pic.png)',
+    '<img src="./pic.png">',
+    '~~~',
+  ].join('\n')
+
+  assert.equal(replaceSiblingImageReferenceFilename(original, 'pic.png', 'new.png'), expected)
+})
+
+test('extracts and rewrites self-closing unquoted sibling img src references', () => {
+  const original = '<img src=./pic.png/>'
+
+  assert.deepEqual(extractSiblingImageReferences(original), ['pic.png'])
+  assert.equal(replaceSiblingImageReferenceFilename(original, 'pic.png', 'new.png'), '<img src=./new.png/>')
 })
