@@ -358,7 +358,8 @@ origin: migrated from legacy ledger ("## DW-50"), 2026-08-02
 location: `src-tauri/src/commands/doc.rs` 的 `save_document_as` 在写入成功后无条件调用 `app_handle.asset_protocol_scope().allow_directory(parent, true)`；`handleExportHtml()`（`src/App.vue`）为写出导出的 HTML 复用了这一命令，导致用户选择的任意导出目录都会被动加入 asset 协议白名单，即使该目录内没有、也不需要通过 `asset://` 访问的图片资源，扩大了运行时文件访问面且未在 AC 中被要求。
 severity: low
 reason: HTML 导出复用 `save_document_as` 命令写入导出文件，该命令写入成功后会顺带放宽导出目标目录的 `asset://` 协议可访问范围，而导出的独立 HTML 文件本身并不依赖该协议渲染图片，属于非预期的权限面扩大副作用。
-status: open
+status: done 2026-08-04
+resolution: already resolved: src/App.vue:419 now invokes write_export_file (not save_document_as) for HTML export, and write_export_file_impl in src-tauri/src/commands/doc.rs:222-242 never calls asset_protocol_scope().allow_directory(), unlike save_document_as_impl at doc.rs:244-265 which does; resolved by story 13-2, commit 7f2a0fe.
 
 ### DW-14: PDF 导出（Story 8.2）仅实现 macOS 原生渲染，Windows/Linux 未实现
 
@@ -413,7 +414,8 @@ origin: migrated from legacy ledger ("## DW-19"), 2026-08-02
 location: src-tauri/src/commands/config.rs (build_confluence_test_result)
 severity: low
 reason: 若网络存在 SSO/代理拦截并返回 2xx 状态码的 HTML 登录页而非真实 Confluence API JSON，当前实现会误判为连接成功。建议后续增加对响应 Content-Type 或 JSON 结构（如 `key`/`name` 字段）的校验。
-status: open
+status: done 2026-08-04
+resolution: already resolved: src-tauri/src/commands/config.rs:554-593 build_confluence_test_result now requires JSON parsing to succeed and a matching key field, rejecting 2xx HTML/non-JSON responses, with 11 unit tests at lines 665-782; resolved by story 11.2, commit 7d4c061.
 
 ### DW-59: Confluence 设置弹窗缺少完整无障碍 Tab 模式（aria-controls / tabpanel / 键盘左右切换）
 
@@ -421,7 +423,8 @@ origin: migrated from legacy ledger ("## DW-20"), 2026-08-02
 location: src/components/SettingsModal.vue (tab-bar)
 severity: low
 reason: 新增的“常规/Confluence”标签使用了 role="tab"，但未补充 aria-controls、role="tabpanel" 关联及方向键切换焦点等完整 WAI-ARIA Tabs 模式，属于无障碍体验的持续改进项，不影响核心功能。
-status: open
+status: done 2026-08-04
+resolution: already resolved: src/components/SettingsModal.vue:500-536 implements full WAI-ARIA tabs (role=tablist/tab/tabpanel, aria-selected, aria-controls, roving tabindex) with arrow-key navigation in onTabKeydown() at lines 255-286; resolved by story 11-3, commit 810a8c2.
 
 ### DW-60: 设置弹窗异步加载 Confluence 配置存在竞态：加载完成前用户开始编辑可能被静默覆盖
 
@@ -429,7 +432,8 @@ origin: migrated from legacy ledger ("## DW-21"), 2026-08-02
 location: src/components/SettingsModal.vue (loadConfluenceSettings)
 severity: low
 reason: `loadConfluenceSettings` 异步返回后会直接覆盖表单字段；若用户在极短时间窗口内（网络/IPC 延迟较大时）已开始输入，理论上存在被静默覆盖的竞态风险。当前 Tauri IPC 调用在实际环境中通常极快，实测未触发，属于理论边界场景，记录以待后续增加"脏表单"保护。
-status: open
+status: done 2026-08-04
+resolution: already resolved: src/components/SettingsModal.vue:47-48,64-72 add a confluenceFormDirty guard with a flush:'sync' watcher; loadConfluenceSettings() at lines 205-211 checks !confluenceFormDirty.value before applying loaded config; resolved by story 11.2, commit 7d4c061.
 
 ### DW-61: 修改 Confluence Base URL/用户名但不重新输入 Token 时会静默复用旧的全局 Token，且无提示。
 
@@ -455,7 +459,8 @@ origin: migrated from legacy ledger ("## DW-53"), 2026-08-02
 location: `onTestConnection`（`SettingsModal.vue:273-281`）在 `spaceKeyError`/`parentPageIdError` 校验失败时提前 `return`，而 `resetConfluenceFeedback`（`SettingsModal.vue:328-333`）不重置 `md2cfMessage`/`md2cfInstalled`，导致界面同时显示"请先修正格式错误"与陈旧的 md2cf 检测结果。
 severity: low
 reason: 点击"测试连接"因格式校验失败而提前返回时，上一次遗留的 md2cf 检测状态消息不会被清除，与当前错误提示同时展示造成误导。
-status: open
+status: done 2026-08-04
+resolution: already resolved: src/components/SettingsModal.vue:477-484 resetConfluenceFeedback() now clears md2cfMessage/md2cfInstalled and is called at the start of onTestConnection() (line 422) before validation-failure early returns; resolved by story 11.2, commit 7d4c061.
 
 ### DW-64: `test_confluence_connection` 仅对 Base URL 做去空格与去除末尾斜杠处理，未做格式校验或归一化，粘贴错误的 Confluence 页面 URL 或带错误 context path 的地址会导致请求地址拼接错误、报错信息不明确。
 
@@ -472,7 +477,8 @@ origin: migrated from legacy ledger ("## DW-55"), 2026-08-02
 location: `commands/config.rs:207-244`：`Command::new("md2cf").arg("--version").output()` 是同步阻塞调用且无超时控制；若系统 PATH 中的 `md2cf` 因损坏或异常而挂起，前端"测试连接"流程会一直等待其返回而无法给出反馈。
 severity: low
 reason: `check_md2cf_installed` 调用外部 `md2cf --version` 时未设置超时，若该二进制异常挂起，测试连接按钮会无限期等待。
-status: open
+status: done 2026-08-04
+resolution: already resolved: src-tauri/src/commands/config.rs:328-331 check_md2cf_installed now calls run_command_with_timeout(cmd, MD2CF_CHECK_TIMEOUT) instead of a blocking .output() call, with timeout-aware result mapping; resolved by story 11.2, commit 7d4c061.
 
 ### DW-66: `story-9-1.spec.ts` 完全 mock 了后端 Tauri 命令，对 Confluence 相关 Rust 逻辑（keyring 读写、请求体拼接、各类失败分支的错误码）缺乏真实的回归测试覆盖。
 
@@ -480,7 +486,8 @@ origin: migrated from legacy ledger ("## DW-56"), 2026-08-02
 location: `e2e/story-9-1.spec.ts` 与 `e2e/utils/tauri-mock.ts` 中所有 `set_confluence_config`/`set_confluence_token`/`test_confluence_connection` 等命令均由前端 mock 直接返回预设结果，`src-tauri/src/commands/config.rs` 中新增的 keyring 存取、HTTP 请求构造与错误分类逻辑没有对应的 Rust 单元测试或集成测试验证；该 mock-everything 模式与项目内既有 e2e 用例一致（非本 story 独有），但使得本 story 新增的后端分支实际未被自动化验证。
 severity: low
 reason: `story-9-1.spec.ts` 完全 mock 了后端 Tauri 命令，对 Confluence 相关 Rust 逻辑（keyring 读写、请求体拼接、各类失败分支的错误码）缺乏真实的回归测试覆盖。
-status: open
+status: done 2026-08-04
+resolution: already resolved: src-tauri/src/commands/config.rs:868-1155 adds a backend_integration_tests module with 5 real network tests via a mock HTTP server plus a keyring round-trip test; resolved by story 11-3, commit 810a8c2 (e2e mocking for the frontend remains unchanged by design).
 
 ### DW-67: `MenuBar.vue` 中 `.menu-item`/`.submenu-trigger` 已有 `aria-haspopup="true"`，但均缺少 `aria-expanded` 状态绑定，屏幕阅读器无法感知这些弹出菜单当前是展开还是收起。
 
@@ -505,28 +512,32 @@ resolution: resolved by sweep bundle dw-menu-aria-semantics
 origin: migrated from legacy ledger ("review of spec-dw-31-33-theme-visual-token-consistency-2.md"), 2026-08-02
 location: src/styles/preview-export.css
 reason: Still hard-codes the pre-existing `rgba(255, 255, 255, 0.05)`/`rgba(255, 255, 255, 0.02)` table header/zebra-stripe overlay literals instead of the new `--color-overlay-header`/`--color-overlay-zebra` tokens, so HTML exports of tables will not match the live `PreviewPane.vue` rendering once a light theme is active. Confirmed via `grep -n "rgba(255" src/styles/preview-export.css`; this file was explicitly out of scope for the DW-31/32/33 spec (only `PreviewPane.vue`/`SlashMenu.vue`/`SettingsModal.vue`/`src/lib/preview.ts`/`src/styles/app.css` were in scope) and predates this change.
-status: open
+status: done 2026-08-04
+resolution: already resolved: src/styles/preview-export.css:178,184 now reference var(--color-overlay-header)/var(--color-overlay-zebra) instead of the hard-coded rgba(255,255,255,0.05)/rgba(255,255,255,0.02) literals; resolved by story 13-1, commit c44a6ed.
 
 ### DW-70: SettingsModal.vue hard-codes success-state text color instead of --color-success token
 
 origin: migrated from legacy ledger ("review of spec-dw-31-33-theme-visual-token-consistency-2.md"), 2026-08-02
 location: src/components/SettingsModal.vue:696
 reason: Hard-codes `color: #3fb950` instead of referencing the `--color-success` token, so it will not adopt the new per-theme light-mode success color values added by this story. Confirmed via `grep -n "#3fb950" src/components/SettingsModal.vue`; this hardcode predates this change and was outside the DW-31/32/33 task list.
-status: open
+status: done 2026-08-04
+resolution: already resolved: src/components/SettingsModal.vue:875 .success-text now uses color: var(--color-success) instead of the hard-coded #3fb950; resolved by story 13-1, commit c44a6ed.
 
 ### DW-71: PublishConfluenceModal.vue hard-codes confirm-button color and undefined --color-danger fallback
 
 origin: migrated from legacy ledger ("review of spec-dw-31-33-theme-visual-token-consistency-2.md"), 2026-08-02
 location: src/components/PublishConfluenceModal.vue:263,272
 reason: Hard-codes a confirm-button text color (`color: white`) and references an undefined `--color-danger` fallback variable instead of the token-system `--color-error`, so it neither adopts `--color-accent-foreground` nor the new per-theme error colors. Confirmed via `grep -n "color: white\|color-danger" src/components/PublishConfluenceModal.vue`; this file was explicitly excluded from the DW-31/32/33 scope and the hardcode predates this change.
-status: open
+status: done 2026-08-04
+resolution: already resolved: src/components/PublishConfluenceModal.vue:263,272 now use var(--color-accent-foreground) and var(--color-error) respectively; grep for "color: white"/"color-danger" returns no matches; resolved by story 13-1, commit c44a6ed.
 
 ### DW-72: MenuBar.vue role="menu" containers lack aria-label tying them to their trigger text
 
 origin: migrated from legacy ledger ("review of spec-dw-67-68-menu-aria-semantics.md"), 2026-08-02
 location: src/components/MenuBar.vue
 reason: The two `.menu-dropdown` containers (and the pre-existing `.submenu-dropdown`) now all declare `role="menu"` but none has an `aria-label`/`aria-labelledby` tying it back to its trigger text ("Markdown Cat" / "文件" / "Theme"), so a screen reader announces "menu" with no distinguishing name when moving between them. Confirmed via `grep -n 'role="menu"' src/components/MenuBar.vue`; DW-67/68's scope was explicitly limited to `aria-expanded` and `role="menu"` parity only.
-status: open
+status: done 2026-08-04
+resolution: already resolved: src/components/MenuBar.vue:177,201,256 all three role="menu" containers now carry aria-label ("Markdown Cat"/"文件"/"Theme"); resolved by story 13-2, commit 7f2a0fe.
 
 ### DW-73: Async image-paste insert can target the wrong document if the user switches files mid-save
 
@@ -558,14 +569,16 @@ resolution: resolved by sweep bundle dw-clipboard-paste-document-identity-guard
 origin: migrated from legacy ledger ("spec-dw-50-restore-current-file-path.md"), 2026-08-03
 location: src/App.vue (onMounted)
 reason: When `read_external_document` returns `{ ok: false }` during last-opened-file restore, onMounted falls through to `get_blank_document` but never updates config to clear `lastOpenedFile`, so the stale broken path persists and is retried on every subsequent launch.
-status: open
+status: done 2026-08-04
+resolution: already resolved: src/App.vue:1329-1335 calls invoke('update_last_opened_file',{filePath:null}) when resolveStartupRestoreOutcome (src/lib/session-restore.ts:36-39) reports shouldClearStaleConfig; resolved by story 12-1, commit e7fe7c2.
 
 ### DW-77: If `read_external_document` throws during the `onMounted` last-opened-file restore, the surrounding `try` aborts the rest of `onMounted`, skipping fallback and setup steps.
 
 origin: migrated from legacy ledger ("spec-dw-50-restore-current-file-path.md"), 2026-08-03
 location: src/App.vue (onMounted)
 reason: If `read_external_document` throws (rather than resolving with `{ ok: false }`) during the last-opened-file restore, the surrounding try/catch aborts the rest of onMounted, skipping the blank-document fallback, `currentSavePath` fallback, and `resetWidths()`/resize-listener setup.
-status: open
+status: done 2026-08-04
+resolution: already resolved: src/App.vue:1305-1311 wraps read_external_document in try/catch so a thrown error still allows outcome resolution and the fallback/resetWidths()/resize-listener setup at lines 1339-1364 to run; resolved by story 12-1.
 
 ### DW-78: No regression test exists for "restore last-opened file, then paste image / save / export"
 
@@ -601,35 +614,40 @@ status: open
 origin: migrated from legacy ledger ("spec-dw-50-restore-current-file-path.md"), 2026-08-03
 location: src/App.vue (onMounted)
 reason: If a user opens a different document via the file-open dialog while the last-opened-file restore's `read_external_document` await is still pending, the restore's resolved `filename`/`content`/`currentFilePath` values can overwrite the user's newly opened document with stale restored data once the await resolves.
-status: open
+status: done 2026-08-04
+resolution: already resolved: src/App.vue:1302,1314 increments and re-checks openRequestToken via isLatestOpenRequest (src/lib/session-restore.ts:42-44) before applying restored state at lines 1316/1325/1329; resolved by story 12-1.
 
 ### DW-80: extractSiblingImageReferences/replaceSiblingImageReferenceFilename were never extended to the HTML `<img>`, reference-style, or titled-link forms extractAssetReferences now covers
 
 origin: migrated from legacy ledger ("spec-save-as-asset-migration-hardening.md"), 2026-08-03
 location: src/lib/image-assets.ts (extractSiblingImageReferences / replaceSiblingImageReferenceFilename)
 reason: extractSiblingImageReferences/replaceSiblingImageReferenceFilename still only recognize plain inline `![alt](./filename)` sibling-image links and were never extended to the HTML `<img>`, reference-style, or titled-link forms that extractAssetReferences now covers, so a sibling image referenced via any of those richer syntaxes loses migration/rename coverage after "Save As" relocates an already-saved document.
-status: open
+status: done 2026-08-04
+resolution: already resolved: src/lib/image-assets.ts:212-217 extractSiblingImageReferences now matches inline, reference-style, and HTML <img> forms, with matching replace patterns at lines 279-311; resolved by story 12-2, commit a8b974e.
 
 ### DW-81: extractAssetReferences treats a query-string/fragment suffix as part of the literal asset filename, so migration silently fails to find the real file
 
 origin: migrated from legacy ledger ("spec-save-as-asset-migration-hardening.md"), 2026-08-03
 location: src/lib/image-assets.ts (extractAssetReferences)
 reason: extractAssetReferences treats a query-string/fragment suffix (e.g. `./assets/pic.png?raw=1` or `./assets/pic.png#frag`) as part of the literal filename, so migration looks for a file named `pic.png?raw=1` on disk, never finds it, and silently reports the reference as skipped/failed instead of migrating the real underlying file.
-status: open
+status: done 2026-08-04
+resolution: already resolved: src/lib/image-assets.ts:150-158 adds stripQueryAndFragment(), applied at lines 187 and 231 before decoding candidate filenames; resolved by story 12-2, commit a8b974e.
 
 ### DW-82: extractAssetReferences matches image references inside fenced code blocks, treating illustrative examples as real asset dependencies
 
 origin: migrated from legacy ledger ("spec-save-as-asset-migration-hardening.md"), 2026-08-03
 location: src/lib/image-assets.ts (extractAssetReferences)
 reason: extractAssetReferences matches image references inside fenced code blocks (e.g. a documentation snippet showing `<img src="./assets/demo.png">`), so a purely illustrative/example reference is treated as a real asset dependency and triggers a spurious "not migrated" warning or unnecessary migration attempt during Save As.
-status: open
+status: done 2026-08-04
+resolution: already resolved: src/lib/image-assets.ts:113-148 stripFencedCodeBlocks() is applied at lines 170 and 213 before pattern matching in both extraction functions; resolved by story 12-2, commit a8b974e.
 
 ### DW-86: `run_command_with_timeout` in `src-tauri/src/commands/config.rs` pipes the child's stdout/stderr but never drains them while polling `try_wait()`, ...
 
 origin: migrated from legacy ledger ("_bmad-output/implementation-artifacts/spec-11-2-confluence-network-and-process-resilience.md"), 2026-08-04
 location: src-tauri/src/commands/config.rs (run_command_with_timeout)
 reason: `run_command_with_timeout` in `src-tauri/src/commands/config.rs` pipes the child's stdout/stderr but never drains them while polling `try_wait()`, so a command whose output exceeds the OS pipe buffer before exiting would block on write and appear to hang until the timeout fires instead of exiting normally. Confirmed by independent review (Blind Hunter) reading the polling loop in `run_command_with_timeout`: `try_wait()` is called in a loop with no concurrent read of `child.stdout`/`child.stderr`, and output is only consumed via `wait_with_output()` after completion is detected. Low real-world likelihood for `md2cf --version`'s tiny output, but the helper is now general-purpose and could be reused for larger-output commands later.
-status: open
+status: done 2026-08-04
+resolution: already resolved: src-tauri/src/commands/config.rs:275-278 spawns stdout_thread/stderr_thread that continuously drain the child's pipes via read_capped() while the main loop only polls try_wait(); the ledger's premise (pipes never drained) does not match the current implementation, which already handles this correctly.
 
 ### DW-87: On timeout, `run_command_with_timeout` only kills the immediate child process; if `md2cf` is a wrapper script that spawns further subprocesses, tho...
 
