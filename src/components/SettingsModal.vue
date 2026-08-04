@@ -2,6 +2,7 @@
 import { computed, nextTick, onUnmounted, reactive, ref, watch, type ComponentPublicInstance } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { open as openDialog } from '@tauri-apps/plugin-dialog'
+import { withDirtyTrackingSuppressed } from '../lib/confluence-dirty-guard'
 import type {
   CmdResult,
   ConfluenceConfig,
@@ -163,25 +164,25 @@ function resetConfluenceMessages() {
   parentPageIdTouched.value = false
   baseUrlTouched.value = false
   usernameTouched.value = false
-  suppressConfluenceDirtyTracking.value = true
-  confluenceForm.baseUrl = ''
-  confluenceForm.username = ''
-  confluenceForm.spaceKey = ''
-  confluenceForm.parentPageId = ''
-  confluenceForm.ignoreSsl = false
-  suppressConfluenceDirtyTracking.value = false
+  withDirtyTrackingSuppressed(suppressConfluenceDirtyTracking, () => {
+    confluenceForm.baseUrl = ''
+    confluenceForm.username = ''
+    confluenceForm.spaceKey = ''
+    confluenceForm.parentPageId = ''
+    confluenceForm.ignoreSsl = false
+  })
   confluenceFormDirty.value = false
   loadedConfluenceConfig.value = { baseUrl: '', username: '' }
 }
 
 function applyConfluenceConfig(config?: Partial<ConfluenceConfig>) {
-  suppressConfluenceDirtyTracking.value = true
-  confluenceForm.baseUrl = config?.baseUrl ?? ''
-  confluenceForm.username = config?.username ?? ''
-  confluenceForm.spaceKey = config?.spaceKey ?? ''
-  confluenceForm.parentPageId = config?.parentPageId ?? ''
-  confluenceForm.ignoreSsl = config?.ignoreSsl ?? false
-  suppressConfluenceDirtyTracking.value = false
+  withDirtyTrackingSuppressed(suppressConfluenceDirtyTracking, () => {
+    confluenceForm.baseUrl = config?.baseUrl ?? ''
+    confluenceForm.username = config?.username ?? ''
+    confluenceForm.spaceKey = config?.spaceKey ?? ''
+    confluenceForm.parentPageId = config?.parentPageId ?? ''
+    confluenceForm.ignoreSsl = config?.ignoreSsl ?? false
+  })
   confluenceFormDirty.value = false
 
   if (config) {

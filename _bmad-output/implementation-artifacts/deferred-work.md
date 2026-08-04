@@ -662,7 +662,8 @@ resolution: resolved by sweep bundle dw-md2cf-timeout-process-robustness
 origin: migrated from legacy ledger ("_bmad-output/implementation-artifacts/spec-11-2-confluence-network-and-process-resilience.md"), 2026-08-04
 location: src/components/SettingsModal.vue (confluenceFormDirty guard)
 reason: The `confluenceFormDirty` dirty-form guard in `SettingsModal.vue` depends on toggling `suppressConfluenceDirtyTracking` around synchronous field assignments combined with a `flush: 'sync'` watcher; this pattern is correct today but fragile — any future refactor that moves the suppress-flag toggling out of a single synchronous block (e.g. splitting `applyConfluenceConfig` across an `await`) would silently defeat the guard with no test to catch the regression. Confirmed by independent review (Blind Hunter), and acknowledged directly in the implementation's own code comment describing the `flush: 'sync'` requirement. No existing or planned test asserts the guard still works if the suppress-flag toggling is split across a microtask boundary.
-status: open
+status: done 2026-08-04
+resolution: resolved by sweep bundle dw-confluence-dirty-guard-test
 
 ### DW-89: On timeout, `run_command_with_timeout` in `src-tauri/src/commands/config.rs` discards any partial stdout/stderr the `md2cf` process produced before...
 
