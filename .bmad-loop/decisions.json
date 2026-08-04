@@ -1,4 +1,13 @@
 {
+  "DW-111": {
+    "answered_at": "2026-08-05",
+    "bundle_name": "",
+    "effect": "build",
+    "intent": "Write a fast unit test that parses src/styles/app.css and asserts every theme selector block defines --color-overlay-header/--color-overlay-zebra/--color-success/--color-error, catching the DW-109-style gap without full browser e2e overhead.",
+    "key": "2",
+    "label": "Add a lightweight unit test asserting every theme block defines the required tokens",
+    "resolution": ""
+  },
   "DW-94": {
     "answered_at": "2026-08-05",
     "bundle_name": "",

@@ -837,6 +837,7 @@ origin: migrated from legacy ledger ("_bmad-output/implementation-artifacts/spec
 location: n/a (test coverage gap)
 reason: No automated test exercises the tokenized colors (`--color-overlay-header`/`--color-overlay-zebra`/`--color-success`/`--color-accent-foreground`/`--color-error`) added by this story under non-default themes or in the exported-HTML code path, so a future theme-palette edit could silently regress these consumers without test failure. Confirmed via review (Blind Hunter): existing test suites only cover default-theme rendering; this story's own Verification section only required `npm run build` and static grep checks, not theme-matrix or export-path assertions, consistent with its "refactor, no behavior change" scope.
 status: open
+decision: 2026-08-05 Add a lightweight unit test asserting every theme block defines the required tokens — Write a fast unit test that parses src/styles/app.css and asserts every theme selector block defines --color-overlay-header/--color-overlay-zebra/--color-success/--color-error, catching the DW-109-style gap without full browser e2e overhead.
 
 ### DW-112: The new `write_export_file` Tauri command is a generic file-write primitive (any `target_path`/`content`) with no export-specific guardrails (e.g. ...
 
