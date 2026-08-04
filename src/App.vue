@@ -29,6 +29,8 @@ import {
   generateClipboardImageFilename,
   getParentDirectory,
   joinFilePath,
+  replaceAssetReferenceFilename,
+  replaceSiblingImageReferenceFilename,
 } from './lib/image-assets'
 import { openDialog, saveDialog } from './lib/tauri-dialog'
 import type {
@@ -179,65 +181,6 @@ function formatPdfExportError(rawError?: string): string {
   return `导出 PDF 失败：${rawError}`
 }
 
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-}
-
-function replaceAssetReferenceFilename(markdown: string, oldFilename: string, newFilename: string): string {
-  if (oldFilename === newFilename) {
-    return markdown
-  }
-
-  let result = markdown
-  // A reference may appear in its raw form or percent-encoded (e.g. a filename
-  // with spaces written as "%20"); the extractor decodes both to the same
-  // logical name, so the replacement must be able to find and rewrite either
-  // spelling, not just the decoded one.
-  const variants = new Set([oldFilename, encodeURIComponent(oldFilename)])
-  for (const oldVariant of variants) {
-    const escaped = escapeRegExp(oldVariant)
-    const newVariant = oldVariant === oldFilename ? newFilename : encodeURIComponent(newFilename)
-    result = result
-      .replace(
-        new RegExp(`(!\\[[^\\]]*\\]\\(\\s*)(\\.\\/assets\\/|assets\\/)${escaped}(?=(?:\\s+["'(]|\\s*\\)))`, 'g'),
-        (_, prefix: string, assetPrefix: string) => `${prefix}${assetPrefix}${newVariant}`,
-      )
-      .replace(
-        new RegExp(`^(\\s*\\[[^\\]]+\\]:\\s*)(\\.\\/assets\\/|assets\\/)${escaped}(?=(?:\\s+["'(]|\\s*$))`, 'gm'),
-        (_, prefix: string, assetPrefix: string) => `${prefix}${assetPrefix}${newVariant}`,
-      )
-      .replace(
-        new RegExp(`(<img\\b[^>]*\\bsrc\\s*=\\s*["'])(\\.\\/assets\\/|assets\\/)${escaped}(?=["'])`, 'gi'),
-        (_, prefix: string, assetPrefix: string) => `${prefix}${assetPrefix}${newVariant}`,
-      )
-      .replace(
-        new RegExp(`(<img\\b[^>]*\\bsrc\\s*=\\s*)(\\.\\/assets\\/|assets\\/)${escaped}(?=[\\s>])`, 'gi'),
-        (_, prefix: string, assetPrefix: string) => `${prefix}${assetPrefix}${newVariant}`,
-      )
-  }
-  return result
-}
-
-function replaceSiblingImageReferenceFilename(markdown: string, oldFilename: string, newFilename: string): string {
-  if (oldFilename === newFilename) {
-    return markdown
-  }
-
-  let result = markdown
-  // Mirrors `replaceAssetReferenceFilename`'s raw + percent-encoded variant
-  // handling, so a sibling image reference written with an encoded filename
-  // (e.g. spaces as "%20") is rewritten too instead of being left stale.
-  const variants = new Set([oldFilename, encodeURIComponent(oldFilename)])
-  for (const oldVariant of variants) {
-    const escaped = escapeRegExp(oldVariant)
-    const newVariant = oldVariant === oldFilename ? newFilename : encodeURIComponent(newFilename)
-    result = result.replace(
-      new RegExp(`(!\\[[^\\]]*\\]\\(\\s*\\.\\/)${escaped}(?=(?:\\s+["'(]|\\s*\\)))`, 'g'),
-      `$1${newVariant}`,
-    )
-  }
-  return result
-}
 
 interface AssetRename {
   oldFilename: string
