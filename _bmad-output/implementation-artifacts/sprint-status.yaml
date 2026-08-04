@@ -97,7 +97,7 @@ development_status:
   epic-11: in-progress
   11-1-confluence-form-validation-and-token-security: done
   11-2-confluence-network-and-process-resilience: done
-  11-3-confluence-accessibility-and-integration-tests: backlog
+  11-3-confluence-accessibility-and-integration-tests: done
   epic-11-retrospective: optional
   epic-12: backlog
   12-1-session-startup-restore-fault-tolerance: backlog

@@ -37,6 +37,7 @@ tracing-subscriber = { version = "0.3", default-features = false, features = ["f
 
 [dev-dependencies]
 tauri = { version = "2.1.1", features = ["test"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
 
 [features]
 default = ["custom-protocol"]

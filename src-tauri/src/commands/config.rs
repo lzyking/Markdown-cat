@@ -863,3 +863,293 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod backend_integration_tests {
+    use super::{
+        is_missing_entry_error, test_confluence_connection, ConfluenceConnectionPayload,
+        ConfluenceTestResult,
+    };
+    use crate::commands::CmdResult;
+    use keyring::Entry;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::thread::JoinHandle;
+    use std::time::Duration;
+
+    const TEST_KEYRING_SERVICE: &str = "markdown-cat-confluence-test";
+    // Suffixed with the OS process id so two `cargo test` invocations running concurrently
+    // against the same machine's credential store (e.g. overlapping CI jobs) cannot delete
+    // each other's in-flight probe credential.
+    fn test_keyring_account() -> String {
+        format!("integration-test-account-{}", std::process::id())
+    }
+
+    // `std::env::set_var` mutates process-global state, and `NO_PROXY`/`no_proxy` are read by
+    // every `reqwest::Client` built during a test run. Rust's default test harness runs `#[test]`
+    // / `#[tokio::test]` functions concurrently on multiple threads within the same process, so
+    // without serialization two proxy-mutating tests racing each other could transiently unset
+    // the exemption for one another. All tests in this module that touch the network (and thus
+    // call `allow_local_mock_server_without_proxy`) acquire this lock for their duration to make
+    // that mutation effectively single-threaded.
+    static ENV_MUTATION_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    struct CredentialCleanupGuard {
+        service: &'static str,
+        account: String,
+    }
+
+    impl CredentialCleanupGuard {
+        fn new(service: &'static str, account: String) -> Self {
+            Self { service, account }
+        }
+    }
+
+    impl Drop for CredentialCleanupGuard {
+        fn drop(&mut self) {
+            if let Ok(entry) = Entry::new(self.service, &self.account) {
+                let _ = entry.delete_credential();
+            }
+        }
+    }
+
+    fn delete_test_credential_if_present(entry: &Entry) {
+        match entry.delete_credential() {
+            Ok(_) => {}
+            Err(error) if is_missing_entry_error(&error) => {}
+            Err(error) => panic!("failed to clean up test credential: {}", error),
+        }
+    }
+
+    /// Holds the global env-mutation lock for the duration of the guard's lifetime and sets the
+    /// `NO_PROXY`/`no_proxy` exemption. Verified necessary in sandboxes/CI runners that configure
+    /// a system-wide HTTP(S) proxy: without this exemption, `reqwest::Client` (built exactly as
+    /// production code builds it, without `.no_proxy()`) routes requests to the loopback mock
+    /// server through that proxy, which either hangs or returns a gateway error instead of
+    /// reaching `127.0.0.1`.
+    struct ProxyExemptionGuard<'a> {
+        _lock: std::sync::MutexGuard<'a, ()>,
+    }
+
+    fn allow_local_mock_server_without_proxy() -> ProxyExemptionGuard<'static> {
+        let lock = ENV_MUTATION_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        std::env::set_var("NO_PROXY", "127.0.0.1,localhost");
+        std::env::set_var("no_proxy", "127.0.0.1,localhost");
+        ProxyExemptionGuard { _lock: lock }
+    }
+
+    fn http_response(status_line: &str, content_type: &str, body: &str) -> Vec<u8> {
+        format!(
+            "HTTP/1.1 {status_line}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        )
+        .into_bytes()
+    }
+
+    /// Reads until the end of the HTTP request headers (`\r\n\r\n`) or the buffer/timeout is
+    /// exhausted, rather than assuming a single `read()` call returns the whole request. The
+    /// requests this module sends are always small enough to arrive in one TCP segment in
+    /// practice, but looping here removes that assumption instead of relying on it silently.
+    fn read_request_headers(stream: &mut std::net::TcpStream) -> Vec<u8> {
+        let mut buf = Vec::with_capacity(4096);
+        let mut chunk = [0u8; 4096];
+        loop {
+            match stream.read(&mut chunk) {
+                Ok(0) => break,
+                Ok(n) => {
+                    buf.extend_from_slice(&chunk[..n]);
+                    if buf.windows(4).any(|w| w == b"\r\n\r\n") || buf.len() >= 64 * 1024 {
+                        break;
+                    }
+                }
+                // A timeout (see `set_read_timeout` below) or other I/O error ends the read loop
+                // with whatever was captured so far, rather than blocking indefinitely.
+                Err(_) => break,
+            }
+        }
+        buf
+    }
+
+    /// Spawns a one-shot mock HTTP server bound to an ephemeral loopback port. Both `accept()`
+    /// and the subsequent `read()` are bounded by `set_read_timeout`/a connect-timeout style
+    /// retry loop so a misbehaving client (or a bug in this test) fails the test with a clear
+    /// panic instead of hanging the whole `cargo test` process indefinitely.
+    fn spawn_single_response_server(response_bytes: Vec<u8>) -> (String, JoinHandle<Vec<u8>>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind mock server");
+        listener
+            .set_nonblocking(true)
+            .expect("set mock server non-blocking");
+        let addr = listener.local_addr().expect("read mock server addr");
+        let handle = std::thread::spawn(move || {
+            const ACCEPT_TIMEOUT: Duration = Duration::from_secs(5);
+            let deadline = std::time::Instant::now() + ACCEPT_TIMEOUT;
+            let mut stream = loop {
+                match listener.accept() {
+                    Ok((stream, _)) => break stream,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        if std::time::Instant::now() >= deadline {
+                            panic!("mock server timed out waiting for a client connection");
+                        }
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(error) => panic!("failed to accept mock connection: {error}"),
+                }
+            };
+            stream
+                .set_nonblocking(false)
+                .expect("clear mock connection non-blocking flag");
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .expect("set mock connection read timeout");
+            let request = read_request_headers(&mut stream);
+            stream
+                .write_all(&response_bytes)
+                .expect("write mock response");
+            stream.flush().expect("flush mock response");
+            request
+        });
+        (format!("http://{}", addr), handle)
+    }
+
+    fn payload_for(base_url: String) -> ConfluenceConnectionPayload {
+        ConfluenceConnectionPayload {
+            base_url,
+            username: "user@example.com".to_string(),
+            api_token: Some("token-123".to_string()),
+            space_key: "TEAM".to_string(),
+            ignore_ssl: false,
+        }
+    }
+
+    fn unwrap_test_result(result: CmdResult<ConfluenceTestResult>) -> ConfluenceTestResult {
+        assert!(result.ok, "command unexpectedly failed: {:?}", result.error);
+        result.data.expect("expected confluence test payload")
+    }
+
+    #[test]
+    fn keyring_entry_round_trips_without_touching_production_credential() {
+        let account = test_keyring_account();
+        let _cleanup_guard = CredentialCleanupGuard::new(TEST_KEYRING_SERVICE, account.clone());
+        let entry =
+            Entry::new(TEST_KEYRING_SERVICE, &account).expect("create test keyring entry");
+
+        delete_test_credential_if_present(&entry);
+        match entry.get_password() {
+            Err(error) => assert!(is_missing_entry_error(&error)),
+            Ok(value) => panic!("expected missing credential before write, got {value:?}"),
+        }
+
+        entry
+            .set_password("probe-token")
+            .expect("write probe token to keyring");
+        assert_eq!(
+            entry.get_password().expect("read probe token from keyring"),
+            "probe-token"
+        );
+
+        entry
+            .delete_credential()
+            .expect("delete probe token from keyring");
+        match entry.get_password() {
+            Err(error) => assert!(is_missing_entry_error(&error)),
+            Ok(value) => panic!("expected missing credential after delete, got {value:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_confluence_connection_succeeds_for_matching_space_response() {
+        let _proxy_guard = allow_local_mock_server_without_proxy();
+        let body = r#"{"key":"TEAM","name":"Team Space"}"#;
+        let (base_url, handle) =
+            spawn_single_response_server(http_response("200 OK", "application/json", body));
+
+        let result = unwrap_test_result(test_confluence_connection(payload_for(base_url)).await);
+        let request = String::from_utf8(handle.join().expect("join mock server"))
+            .expect("mock request should be valid utf-8")
+            .to_ascii_lowercase();
+
+        assert!(result.success);
+        assert_eq!(result.status_code, Some(200));
+        assert!(request.starts_with("get /rest/api/space/team http/1.1\r\n"));
+        assert!(
+            request.contains("authorization: basic "),
+            "request should include basic auth"
+        );
+        assert!(
+            request.contains("accept: application/json"),
+            "request should ask for json"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_confluence_connection_reports_unauthorized_status() {
+        let _proxy_guard = allow_local_mock_server_without_proxy();
+        let (base_url, handle) = spawn_single_response_server(http_response(
+            "401 Unauthorized",
+            "application/json",
+            r#"{"message":"unauthorized"}"#,
+        ));
+
+        let result = unwrap_test_result(test_confluence_connection(payload_for(base_url)).await);
+        let _ = handle.join().expect("join mock server");
+
+        assert!(!result.success);
+        assert_eq!(result.status_code, Some(401));
+        assert!(result.message.contains("用户名或 API Token 不正确"));
+    }
+
+    #[tokio::test]
+    async fn test_confluence_connection_reports_forbidden_status() {
+        let _proxy_guard = allow_local_mock_server_without_proxy();
+        let (base_url, handle) = spawn_single_response_server(http_response(
+            "403 Forbidden",
+            "application/json",
+            r#"{"message":"forbidden"}"#,
+        ));
+
+        let result = unwrap_test_result(test_confluence_connection(payload_for(base_url)).await);
+        let _ = handle.join().expect("join mock server");
+
+        assert!(!result.success);
+        assert_eq!(result.status_code, Some(403));
+        assert!(result.message.contains("没有访问该 Space 的权限"));
+    }
+
+    #[tokio::test]
+    async fn test_confluence_connection_reports_not_found_status() {
+        let _proxy_guard = allow_local_mock_server_without_proxy();
+        let (base_url, handle) = spawn_single_response_server(http_response(
+            "404 Not Found",
+            "application/json",
+            r#"{"message":"missing"}"#,
+        ));
+
+        let result = unwrap_test_result(test_confluence_connection(payload_for(base_url)).await);
+        let _ = handle.join().expect("join mock server");
+
+        assert!(!result.success);
+        assert_eq!(result.status_code, Some(404));
+        assert!(result.message.contains("未找到对应的 Space Key"));
+    }
+
+    #[tokio::test]
+    async fn test_confluence_connection_rejects_html_false_success_response() {
+        let _proxy_guard = allow_local_mock_server_without_proxy();
+        let (base_url, handle) = spawn_single_response_server(http_response(
+            "200 OK",
+            "text/html; charset=utf-8",
+            "<html><body>SSO login</body></html>",
+        ));
+
+        let result = unwrap_test_result(test_confluence_connection(payload_for(base_url)).await);
+        let _ = handle.join().expect("join mock server");
+
+        assert!(!result.success);
+        assert_eq!(result.status_code, Some(200));
+        assert!(result
+            .message
+            .contains("响应内容不是有效的 Confluence 数据"));
+    }
+}

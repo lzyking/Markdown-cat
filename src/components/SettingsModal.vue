@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onUnmounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onUnmounted, reactive, ref, watch, type ComponentPublicInstance } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { open as openDialog } from '@tauri-apps/plugin-dialog'
 import type {
@@ -23,7 +23,10 @@ const emit = defineEmits<{
   (e: 'update-path', newPath: string): void
 }>()
 
-const activeTab = ref<'general' | 'confluence'>('general')
+const tabOrder = ['general', 'confluence'] as const
+type SettingsTab = (typeof tabOrder)[number]
+
+const activeTab = ref<SettingsTab>('general')
 const selectedPath = ref('')
 const errorMessage = ref('')
 const confluenceErrorMessage = ref('')
@@ -43,6 +46,7 @@ const baseUrlTouched = ref(false)
 const usernameTouched = ref(false)
 const confluenceFormDirty = ref(false)
 const suppressConfluenceDirtyTracking = ref(false)
+const tabButtonRefs = ref<Array<HTMLButtonElement | null>>([])
 
 const loadedConfluenceConfig = ref<{ baseUrl: string; username: string }>({
   baseUrl: '',
@@ -228,6 +232,57 @@ function onKeydown(e: KeyboardEvent) {
   if (props.isOpen && e.key === 'Escape') {
     onClose()
   }
+}
+
+function setTabButtonRef(index: number, element: Element | ComponentPublicInstance | null) {
+  tabButtonRefs.value[index] = element instanceof HTMLButtonElement ? element : null
+}
+
+function focusTabButton(tab: SettingsTab) {
+  const index = tabOrder.indexOf(tab)
+  void nextTick(() => {
+    tabButtonRefs.value[index]?.focus()
+  })
+}
+
+function setActiveTab(tab: SettingsTab, options?: { focus?: boolean }) {
+  activeTab.value = tab
+  if (options?.focus) {
+    focusTabButton(tab)
+  }
+}
+
+function onTabKeydown(event: KeyboardEvent) {
+  if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) {
+    return
+  }
+  // Ignore modified key presses (e.g. Cmd/Ctrl+Arrow, Alt+Arrow) so browser/OS/assistive-tech
+  // shortcuts that happen to share these keys are not hijacked by tab switching.
+  if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) {
+    return
+  }
+
+  event.preventDefault()
+
+  const currentIndex = tabOrder.indexOf(activeTab.value)
+  let nextIndex = currentIndex
+
+  switch (event.key) {
+    case 'ArrowLeft':
+      nextIndex = (currentIndex - 1 + tabOrder.length) % tabOrder.length
+      break
+    case 'ArrowRight':
+      nextIndex = (currentIndex + 1) % tabOrder.length
+      break
+    case 'Home':
+      nextIndex = 0
+      break
+    case 'End':
+      nextIndex = tabOrder.length - 1
+      break
+  }
+
+  setActiveTab(tabOrder[nextIndex], { focus: true })
 }
 
 onUnmounted(() => {
@@ -442,30 +497,45 @@ function resetConfluenceFeedback() {
         <button class="close-btn" aria-label="关闭对话框" @click="onClose">×</button>
       </div>
 
-      <div class="tab-bar" role="tablist" aria-label="设置标签页">
+      <div class="tab-bar" role="tablist" aria-label="设置标签页" @keydown="onTabKeydown">
         <button
+          id="tab-general"
+          :ref="(element) => setTabButtonRef(0, element)"
           type="button"
           class="tab-btn"
           :class="{ active: activeTab === 'general' }"
           role="tab"
           :aria-selected="activeTab === 'general'"
-          @click="activeTab = 'general'"
+          aria-controls="panel-general"
+          :tabindex="activeTab === 'general' ? 0 : -1"
+          @click="setActiveTab('general')"
         >
           常规
         </button>
         <button
+          id="tab-confluence"
+          :ref="(element) => setTabButtonRef(1, element)"
           type="button"
           class="tab-btn"
           :class="{ active: activeTab === 'confluence' }"
           role="tab"
           :aria-selected="activeTab === 'confluence'"
-          @click="activeTab = 'confluence'"
+          aria-controls="panel-confluence"
+          :tabindex="activeTab === 'confluence' ? 0 : -1"
+          @click="setActiveTab('confluence')"
         >
           Confluence
         </button>
       </div>
 
-      <div v-if="activeTab === 'general'" class="modal-body">
+      <div
+        v-if="activeTab === 'general'"
+        id="panel-general"
+        class="modal-body"
+        role="tabpanel"
+        aria-labelledby="tab-general"
+        tabindex="0"
+      >
         <p class="modal-description">选择新的默认 Markdown 文件保存目录：</p>
         <div class="path-input-group">
           <input
@@ -482,7 +552,14 @@ function resetConfluenceFeedback() {
         <p v-if="errorMessage" class="error-text" role="alert">{{ errorMessage }}</p>
       </div>
 
-      <div v-else class="modal-body confluence-body">
+      <div
+        v-else
+        id="panel-confluence"
+        class="modal-body confluence-body"
+        role="tabpanel"
+        aria-labelledby="tab-confluence"
+        tabindex="0"
+      >
         <p class="modal-description">配置 Confluence REST API 发布参数，API Token 将安全保存在系统凭据库中。</p>
 
         <div
