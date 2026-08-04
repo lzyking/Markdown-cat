@@ -872,7 +872,7 @@ function resetConfluenceFeedback() {
 
 .status-text.success,
 .success-text {
-  color: #3fb950;
+  color: var(--color-success);
 }
 
 .status-text.failure,

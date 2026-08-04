@@ -260,7 +260,7 @@ function stepStatusIcon(status: ConfluencePublishProgress['status']) {
 .confirm-btn {
   background: var(--color-accent);
   border-color: var(--color-accent);
-  color: white;
+  color: var(--color-accent-foreground);
 }
 
 .success-text {
@@ -269,7 +269,7 @@ function stepStatusIcon(status: ConfluencePublishProgress['status']) {
 }
 
 .error-text {
-  color: var(--color-danger, #d25a5a);
+  color: var(--color-error);
   margin: 0;
 }
 </style>

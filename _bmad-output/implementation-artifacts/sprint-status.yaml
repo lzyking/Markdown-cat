@@ -105,7 +105,7 @@ development_status:
   12-3-session-restore-and-asset-regression-tests: done
   epic-12-retrospective: optional
   epic-13: backlog
-  13-1-design-tokens-hardcode-cleanup: backlog
+  13-1-design-tokens-hardcode-cleanup: done
   13-2-menu-aria-labels-and-tauri-scope-safety: backlog
   epic-13-retrospective: optional
 
