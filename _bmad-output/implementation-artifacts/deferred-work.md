@@ -844,7 +844,9 @@ decision: 2026-08-05 Add a lightweight unit test asserting every theme block def
 origin: migrated from legacy ledger ("_bmad-output/implementation-artifacts/spec-13-2-menu-aria-labels-and-tauri-scope-safety.md"), 2026-08-04
 location: src-tauri/src/commands (write_export_file)
 reason: The new `write_export_file` Tauri command is a generic file-write primitive (any `target_path`/`content`) with no export-specific guardrails (e.g. restricting to `.html` extensions or validating the path isn't inside a sensitive directory), broadening the frontend-invokable API surface beyond strictly what HTML export needs. Confirmed by independent review (Blind Hunter). This story's spec scoped `write_export_file` only to mirror `save_document_as`'s write semantics minus the asset-scope widening (DW-72); adding path/extension validation was not in scope and risks over-specifying "how" per the spec template's guidance.
-status: open
+status: done 2026-08-05
+resolution: closed by human decision: The command requires a compromised frontend to exploit, mirrors the pre-existing save_document_as pattern exactly, and over-restricting a general file-write primitive risks breaking legitimate future export formats.
+decision: 2026-08-05 Leave as a generic primitive, consistent with save_document_as — The command requires a compromised frontend to exploit, mirrors the pre-existing save_document_as pattern exactly, and over-restricting a general file-write primitive risks breaking legitimate future export formats.
 
 - source_spec: `_bmad-output/implementation-artifacts/spec-dw-103-106-markdown-fence-linkdest-fixes.md`
   summary: Angle-bracket link/image destinations (`<...>`) do not support CommonMark's backslash-escaped `>` (e.g. `<./assets/foo\>.png>` for a literal `>` in a filename) in either extraction (`extractAssetReferences`/`extractSiblingImageReferences`) or rewrite (`replaceAssetReferenceFilename`/`replaceSiblingImageReferenceFilename`).
