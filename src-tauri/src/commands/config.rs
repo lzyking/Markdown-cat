@@ -831,17 +831,18 @@ fn first_non_empty_line(bytes: &[u8]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_confluence_test_result, md2cf_timeout_message, run_command_with_timeout,
-        CommandRunResult, TEST_TIMEOUT_KILL_DELAY_MS,
+        build_confluence_test_result, check_md2cf_installed, md2cf_timeout_message,
+        run_command_with_timeout, CommandRunResult, TEST_TIMEOUT_KILL_DELAY_MS,
     };
     use reqwest::StatusCode;
     use serde_json::json;
     use std::fs;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::process::Command;
     use std::sync::atomic::Ordering;
     use std::time::Duration;
 
+    static PATH_MUTATION_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
     static RUN_COMMAND_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     struct TimeoutKillDelayGuard {
@@ -884,6 +885,116 @@ mod tests {
                 .as_nanos()
         ));
         path
+    }
+
+    fn unique_test_artifact_dir(label: &str) -> PathBuf {
+        let mut path = std::env::current_dir().expect("read current dir");
+        path.push("target");
+        path.push("config-command-tests");
+        path.push(format!(
+            "{label}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("current time after unix epoch")
+                .as_nanos()
+        ));
+        path
+    }
+
+    /// Holds two locks for the guard's lifetime: `PATH_MUTATION_LOCK` serializes this guard's own
+    /// `PATH` mutations against each other, and `RUN_COMMAND_TEST_LOCK` additionally serializes
+    /// against every `run_command_with_timeout`-based test in this module (`check_md2cf_installed`
+    /// itself calls `run_command_with_timeout`), so a `PATH`-mutating test can never overlap with
+    /// e.g. a `TimeoutKillDelayGuard`-held test that also drives that shared code path.
+    struct PathEnvGuard {
+        _path_lock: std::sync::MutexGuard<'static, ()>,
+        _run_command_lock: std::sync::MutexGuard<'static, ()>,
+        original_path: Option<std::ffi::OsString>,
+    }
+
+    impl PathEnvGuard {
+        fn prepend(dir: &Path) -> Self {
+            let path_lock = PATH_MUTATION_LOCK
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let run_command_lock = RUN_COMMAND_TEST_LOCK
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let original_path = std::env::var_os("PATH");
+            let mut paths = vec![dir.to_path_buf()];
+            if let Some(existing) = &original_path {
+                paths.extend(std::env::split_paths(existing));
+            }
+            let joined = std::env::join_paths(paths).expect("join PATH entries");
+            std::env::set_var("PATH", joined);
+            Self {
+                _path_lock: path_lock,
+                _run_command_lock: run_command_lock,
+                original_path,
+            }
+        }
+
+        fn replace(dir: &Path) -> Self {
+            let path_lock = PATH_MUTATION_LOCK
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let run_command_lock = RUN_COMMAND_TEST_LOCK
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let original_path = std::env::var_os("PATH");
+            std::env::set_var("PATH", dir);
+            Self {
+                _path_lock: path_lock,
+                _run_command_lock: run_command_lock,
+                original_path,
+            }
+        }
+    }
+
+    impl Drop for PathEnvGuard {
+        fn drop(&mut self) {
+            if let Some(path) = &self.original_path {
+                std::env::set_var("PATH", path);
+            } else {
+                std::env::remove_var("PATH");
+            }
+        }
+    }
+
+    fn write_fake_md2cf(dir: &Path, unix_body: &str, windows_body: &str) {
+        fs::create_dir_all(dir).expect("create fake md2cf dir");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = windows_body;
+
+            let script_path = dir.join("md2cf");
+            fs::write(&script_path, format!("#!/bin/sh\n{unix_body}\n"))
+                .expect("write fake md2cf script");
+            let mut permissions = fs::metadata(&script_path)
+                .expect("read fake md2cf metadata")
+                .permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(&script_path, permissions).expect("chmod fake md2cf script");
+        }
+        #[cfg(windows)]
+        {
+            let _ = unix_body;
+            let script_path = dir.join("md2cf.bat");
+            fs::write(&script_path, format!("@echo off\r\n{windows_body}\r\n"))
+                .expect("write fake md2cf batch file");
+        }
+    }
+
+    // `#[track_caller]` makes an assertion failure here point at the calling test's line
+    // instead of this helper's, keeping test failure output actionable.
+    #[track_caller]
+    fn unwrap_md2cf_check_result(
+        result: crate::commands::CmdResult<super::Md2cfCheckResult>,
+    ) -> super::Md2cfCheckResult {
+        assert!(result.ok, "command unexpectedly failed: {:?}", result.error);
+        result.data.expect("expected md2cf check payload")
     }
 
     #[test]
@@ -1089,6 +1200,73 @@ mod tests {
                 panic!("chatty command incorrectly timed out — stdout was not drained concurrently")
             }
         }
+    }
+
+    #[test]
+    fn check_md2cf_installed_reports_completed_for_fake_binary_success() {
+        let fake_dir = unique_test_artifact_dir("md2cf-success");
+        write_fake_md2cf(
+            &fake_dir,
+            "printf 'md2cf 9.9.9\\n'\nexit 0",
+            "echo md2cf 9.9.9\r\nexit /b 0",
+        );
+        let _path_guard = PathEnvGuard::prepend(&fake_dir);
+
+        let result = unwrap_md2cf_check_result(check_md2cf_installed());
+
+        assert!(result.installed);
+        assert_eq!(result.version, Some("md2cf 9.9.9".to_string()));
+        assert!(result.message.contains("已检测到 md2cf"));
+    }
+
+    #[test]
+    fn check_md2cf_installed_reports_timeout_for_slow_fake_binary() {
+        // This test intentionally pays a real multi-second wall-clock cost because there is no
+        // test seam to shorten the production `MD2CF_CHECK_TIMEOUT` constant. The sleep duration
+        // is derived from that constant (rather than a second hardcoded number) so a future
+        // change to the timeout can't silently desync the two and turn this into a flaky test.
+        let overshoot_secs = super::MD2CF_CHECK_TIMEOUT.as_secs() + 1;
+        let fake_dir = unique_test_artifact_dir("md2cf-timeout");
+        write_fake_md2cf(
+            &fake_dir,
+            &format!("sleep {overshoot_secs}"),
+            &format!("ping -n {} 127.0.0.1 >nul", overshoot_secs + 1),
+        );
+        let _path_guard = PathEnvGuard::prepend(&fake_dir);
+
+        let result = unwrap_md2cf_check_result(check_md2cf_installed());
+
+        assert!(!result.installed);
+        assert_eq!(result.version, None);
+        assert_eq!(result.message, md2cf_timeout_message(b"", b""));
+    }
+
+    #[test]
+    fn check_md2cf_installed_reports_completed_for_fake_binary_failure() {
+        // Covers the `Completed` branch's non-zero-exit sub-case (installed but broken), which
+        // complements the success sub-case above and rounds out end-to-end coverage of every
+        // outcome `check_md2cf_installed` maps for a `Completed` process.
+        let fake_dir = unique_test_artifact_dir("md2cf-broken");
+        write_fake_md2cf(&fake_dir, "exit 1", "exit /b 1");
+        let _path_guard = PathEnvGuard::prepend(&fake_dir);
+
+        let result = unwrap_md2cf_check_result(check_md2cf_installed());
+
+        assert!(!result.installed);
+        assert!(result.message.contains("可能安装损坏"));
+    }
+
+    #[test]
+    fn check_md2cf_installed_reports_not_found_when_absent_from_path() {
+        let empty_dir = unique_test_artifact_dir("md2cf-missing");
+        fs::create_dir_all(&empty_dir).expect("create empty PATH dir");
+        let _path_guard = PathEnvGuard::replace(&empty_dir);
+
+        let result = unwrap_md2cf_check_result(check_md2cf_installed());
+
+        assert!(!result.installed);
+        assert_eq!(result.version, None);
+        assert_eq!(result.message, "未检测到 md2cf，将使用 REST API 直连模式。");
     }
 
     #[cfg(unix)]

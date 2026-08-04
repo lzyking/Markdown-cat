@@ -678,7 +678,8 @@ resolution: resolved by sweep bundle dw-md2cf-timeout-process-robustness
 origin: migrated from legacy ledger ("_bmad-output/implementation-artifacts/spec-11-2-confluence-network-and-process-resilience.md"), 2026-08-04
 location: src-tauri/src/commands/config.rs (test_confluence_connection, check_md2cf_installed)
 reason: The new `response.chunk()`-based streaming body read and 1 MiB cap in `test_confluence_connection`, and the `Completed`/`TimedOut`/`NotFound` result-mapping in `check_md2cf_installed`, are only covered indirectly (via the pure `build_confluence_test_result` function and the generic `run_command_with_timeout` helper with unrelated test commands) — there is no integration test exercising the actual streaming loop against a real/mocked HTTP response, nor an end-to-end test of `check_md2cf_installed()` itself. Confirmed by independent review (both Blind Hunter and Edge Case Hunter): adding either would require a local mock HTTP server or a real/fake `md2cf` binary on PATH, which the current test suite has no infrastructure for.
-status: open
+status: done 2026-08-04
+resolution: resolved by sweep bundle dw-md2cf-fake-binary-test
 
 ### DW-91: When the 1 MiB body cap is hit in `test_confluence_connection`, the function returns immediately without reading/discarding the remainder of the HT...
 
