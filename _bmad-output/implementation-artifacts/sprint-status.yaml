@@ -102,7 +102,7 @@ development_status:
   epic-12: backlog
   12-1-session-startup-restore-fault-tolerance: done
   12-2-markdown-asset-parser-edge-cases: done
-  12-3-session-restore-and-asset-regression-tests: backlog
+  12-3-session-restore-and-asset-regression-tests: done
   epic-12-retrospective: optional
   epic-13: backlog
   13-1-design-tokens-hardcode-cleanup: backlog

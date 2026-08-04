@@ -1298,7 +1298,7 @@ onMounted(async () => {
       if (configRes.data.savePath) {
         currentSavePath.value = configRes.data.savePath
       }
-      if (configRes.data.lastOpenedFile && !(window as any).__TAURI_MOCK__) {
+      if (configRes.data.lastOpenedFile && (!(window as any).__TAURI_MOCK__ || (window as any).__TAURI_MOCK_ENABLE_STARTUP_RESTORE__ === true)) {
         const requestToken = ++openRequestToken.value
         let loadRes: CmdResult<DocumentState> | null = null
 

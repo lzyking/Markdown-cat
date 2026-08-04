@@ -572,6 +572,28 @@ status: open
 origin: migrated from legacy ledger ("spec-dw-50-restore-current-file-path.md"), 2026-08-03
 location: src/App.vue (documentBaseDir / onMounted restore path)
 reason: No regression test covers "restore last-opened file, then paste image / save / export", even though `documentBaseDir` (which resolves from the restored `currentFilePath`) drives paste-image save location, autosave/save-as target resolution, and HTML/PDF/Confluence export asset resolution; a future refactor could silently regress this.
+status: resolved
+resolution: resolved for the restore → paste-image → autosave → **HTML export** chain by `e2e/story-12-3.spec.ts`, enabled by the opt-in `App.vue` startup-restore test hook `__TAURI_MOCK_ENABLE_STARTUP_RESTORE__`. Save-As migration, PDF export, and Confluence publish asset-resolution coverage remain untested — tracked separately as DW-83, DW-84, and DW-85.
+
+### DW-83: No regression test covers Save-As migration of restored/pasted assets driven by documentBaseDir
+
+origin: review finding from spec-12-3-session-restore-and-asset-regression-tests.md, 2026-08-04
+location: src/App.vue (handleSaveAsFile / documentBaseDir-driven asset migration)
+reason: DW-78's restore→paste→autosave→export regression test (story-12-3.spec.ts) does not exercise "Save As" after restoring a last-opened file and pasting an image; `documentBaseDir`-driven asset migration (moving sibling images to the new save location and rewriting markdown references) remains untested for the restored-session case and could silently regress.
+status: open
+
+### DW-84: No regression test covers PDF export image resolution driven by documentBaseDir for a restored session
+
+origin: review finding from spec-12-3-session-restore-and-asset-regression-tests.md, 2026-08-04
+location: src/App.vue (derivePdfExportDefaultPath / PDF export asset resolution)
+reason: DW-78's regression test (story-12-3.spec.ts) only covers HTML export; PDF export uses a separate export path that also depends on `documentBaseDir` derived from the restored `currentFilePath`, and image resolution during PDF export for a restored session remains untested.
+status: open
+
+### DW-85: No regression test covers Confluence publish local-image resolution driven by documentBaseDir for a restored session
+
+origin: review finding from spec-12-3-session-restore-and-asset-regression-tests.md, 2026-08-04
+location: src/App.vue (Confluence publish flow / local image resolution)
+reason: DW-78's regression test (story-12-3.spec.ts) does not cover Confluence publish; local image resolution during publish also depends on `documentBaseDir` derived from the restored `currentFilePath`, and this path remains untested for a restored session.
 status: open
 
 ### DW-79: Narrow startup race — opening a different document while last-opened-file restore is still pending can overwrite it with stale restored data
@@ -685,3 +707,11 @@ status: open
 - source_spec: `_bmad-output/implementation-artifacts/spec-12-2-markdown-asset-parser-edge-cases.md`
   summary: `stripFencedCodeBlocks`'s `getFenceInfo` treats any line starting with 3+ backticks as a valid fence opener even when the info string after the backtick run itself contains a backtick (e.g. ` ```bad`info `), whereas CommonMark specifies a backtick-fenced code block's info string must not contain a backtick, so such a malformed-looking line is incorrectly accepted as a real fence and can cause following content to be blanked out or a real closing fence to be mismatched.
   evidence: Confirmed by independent review (Blind Hunter and Edge Case Hunter, pass 3): `getFenceInfo` only validates the leading run length (`length >= 3`) and does not inspect `rest` for a backtick when `char === '`'`, unlike the CommonMark fenced-code-block spec. Narrow edge case (a backtick appearing in an otherwise-fence-like line's trailing text) with low real-world likelihood in typical note documents; not part of this story's explicit scope (DW-80/81/82).
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-12-3-session-restore-and-asset-regression-tests.md`
+  summary: The new `story-12-3.spec.ts` restore path only exercises the successful-restore branch; it does not cover the stale-config cleanup path where `read_external_document` fails/returns `{ ok: false }` during startup restore and `update_last_opened_file` should be invoked to clear the broken `lastOpenedFile` config.
+  evidence: Confirmed by independent review (Blind Hunter, pass 2). The opt-in `__TAURI_MOCK_ENABLE_STARTUP_RESTORE__` hook now makes this failure path testable under the mock harness for the first time, but exercising it was out of this story's explicit scope (spec's "Never" section: do not modify or test startup-restore failure handling beyond what's needed to close DW-78's happy-path gap).
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-12-3-session-restore-and-asset-regression-tests.md`
+  summary: The new opt-in `__TAURI_MOCK_ENABLE_STARTUP_RESTORE__` hook makes the `onMounted` startup-restore `openRequestToken` race (a user opening a different document while the restore's `read_external_document` await is still pending) testable under the mock harness for the first time, but `story-12-3.spec.ts` does not add a regression test for it; this race is already tracked as DW-79.
+  evidence: Confirmed by independent review (Blind Hunter, pass 2). Out of this story's explicit scope (DW-78 only); flagged here so a future pass on DW-79 can use the newly-testable opt-in hook to close it.
