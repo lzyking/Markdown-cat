@@ -59,7 +59,9 @@ jobs:
           name: Markdown-Cat-${{ matrix.platform }}-Packages
           path: |
             src-tauri/target/release/bundle/*.zip
+            src-tauri/target/release/bundle/dmg/*.dmg
             src-tauri/target/release/bundle/nsis/*.exe
+            src-tauri/target/release/bundle/msi/*.msi
 
       - name: Release Packages to GitHub Release
         uses: softprops/action-gh-release@v2
@@ -67,6 +69,9 @@ jobs:
         with:
           files: |
             src-tauri/target/release/bundle/*.zip
+            src-tauri/target/release/bundle/dmg/*.dmg
             src-tauri/target/release/bundle/nsis/*.exe
+            src-tauri/target/release/bundle/msi/*.msi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
