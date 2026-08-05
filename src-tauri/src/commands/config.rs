@@ -1,3 +1,4 @@
+use crate::commands::confluence::send_confluence_get;
 use crate::commands::CmdResult;
 use crate::config::{self, AppConfig, ConfluenceConfig};
 use keyring::{Entry, Error as KeyringError};
@@ -139,7 +140,7 @@ pub fn set_confluence_config(
     confluence: ConfluenceConfig,
 ) -> CmdResult<()> {
     let trimmed = normalize_confluence_config(confluence);
-    if trimmed.base_url.is_empty() || trimmed.username.is_empty() || trimmed.space_key.is_empty() {
+    if trimmed.base_url.is_empty() || trimmed.space_key.is_empty() {
         return CmdResult::failure(config::ERR_CONFLUENCE_REQUIRED_FIELD_MISSING.to_string());
     }
     if !config::is_valid_confluence_base_url(&trimmed.base_url) {
@@ -548,10 +549,10 @@ pub async fn test_confluence_connection(
     let username = payload.username.trim().to_string();
     let space_key = payload.space_key.trim().to_string();
 
-    if base_url.is_empty() || username.is_empty() || space_key.is_empty() {
+    if base_url.is_empty() || space_key.is_empty() {
         return CmdResult::success(ConfluenceTestResult {
             success: false,
-            message: "请先填写 Confluence 地址、用户名和 Space Key。".to_string(),
+            message: "请先填写 Confluence 地址和 Space Key。".to_string(),
             status_code: None,
         });
     }
@@ -600,12 +601,15 @@ pub async fn test_confluence_connection(
         }
     };
 
-    let response = client
-        .get(&url)
-        .basic_auth(username, Some(token))
-        .header(reqwest::header::ACCEPT, "application/json")
-        .send()
-        .await;
+    let response = send_confluence_get(
+        &client,
+        &url,
+        &username,
+        &token,
+        None,
+        Some(&[(reqwest::header::ACCEPT.as_str(), "application/json")]),
+    )
+    .await;
 
     match response {
         Ok(mut response) => {
@@ -769,7 +773,7 @@ fn build_confluence_test_result(
     }
 
     let message = match status {
-        StatusCode::UNAUTHORIZED => "连接失败：用户名或 API Token 不正确。",
+        StatusCode::UNAUTHORIZED => "连接失败：用户名、API Token 或 Personal Access Token (PAT) 不正确。",
         StatusCode::FORBIDDEN => "连接失败：当前账号没有访问该 Space 的权限。",
         StatusCode::NOT_FOUND => "连接失败：未找到对应的 Space Key。",
         _ => "连接失败：Confluence 返回了异常状态码。",
@@ -1620,6 +1624,28 @@ mod backend_integration_tests {
     }
 
     #[tokio::test]
+    async fn test_confluence_connection_uses_bearer_auth_when_username_is_empty() {
+        let _proxy_guard = allow_local_mock_server_without_proxy();
+        let body = r#"{"key":"TEAM","name":"Team Space"}"#;
+        let (base_url, handle) =
+            spawn_single_response_server(http_response("200 OK", "application/json", body));
+
+        let mut payload = payload_for(base_url);
+        payload.username = "".to_string();
+        let result = unwrap_test_result(test_confluence_connection(payload).await);
+        let request = String::from_utf8(handle.join().expect("join mock server"))
+            .expect("mock request should be valid utf-8")
+            .to_ascii_lowercase();
+
+        assert!(result.success);
+        assert_eq!(result.status_code, Some(200));
+        assert!(
+            request.contains("authorization: bearer token-123"),
+            "request should use bearer auth when username is empty"
+        );
+    }
+
+    #[tokio::test]
     async fn test_confluence_connection_reports_unauthorized_status() {
         let _proxy_guard = allow_local_mock_server_without_proxy();
         let (base_url, handle) = spawn_single_response_server(http_response(
@@ -1633,7 +1659,7 @@ mod backend_integration_tests {
 
         assert!(!result.success);
         assert_eq!(result.status_code, Some(401));
-        assert!(result.message.contains("用户名或 API Token 不正确"));
+        assert!(result.message.contains("用户名、API Token 或 Personal Access Token (PAT) 不正确"));
     }
 
     #[tokio::test]

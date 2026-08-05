@@ -5,7 +5,7 @@ use tauri::AppHandle;
 use tempfile::{Builder as TempFileBuilder, NamedTempFile};
 use url::Url;
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 use std::{
     sync::{
         atomic::{AtomicU64, Ordering},
@@ -23,13 +23,24 @@ use objc2::MainThreadMarker;
 use objc2_foundation::{NSData, NSError, NSString, NSURL};
 #[cfg(target_os = "macos")]
 use objc2_web_kit::WKWebView;
-#[cfg(target_os = "macos")]
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 use tauri::{
     webview::{PageLoadEvent, WebviewWindow},
     Runtime, WebviewUrl, WebviewWindowBuilder,
 };
 
-#[cfg(target_os = "macos")]
+#[cfg(target_os = "windows")]
+use webview2_com::Microsoft::Web::WebView2::Win32::{
+    ICoreWebView2Controller, ICoreWebView2PrintToPdfCompletedHandler,
+    ICoreWebView2PrintToPdfCompletedHandler_Impl, ICoreWebView2_7,
+};
+#[cfg(target_os = "windows")]
+use windows::core::Interface;
+#[cfg(target_os = "windows")]
+use windows::Win32::Foundation::BOOL;
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 static NEXT_PDF_EXPORT_WINDOW_ID: AtomicU64 = AtomicU64::new(1);
 
 /// Cheap, synchronous capability probe so the frontend can fail fast (before
@@ -390,7 +401,7 @@ fn dispatch_load_file_url<R: Runtime>(
         .map_err(|e| format!("ERR_PDF_EXPORT_MAIN_THREAD_DISPATCH_FAILED: {}", e))
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 async fn recv_with_timeout<T: Send + 'static>(
     receiver: Receiver<T>,
     timeout: Duration,
@@ -407,7 +418,7 @@ async fn recv_with_timeout<T: Send + 'static>(
         })
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 fn cleanup_hidden_window<R: Runtime>(window: &WebviewWindow<R>) {
     if let Err(error) = window.destroy() {
         eprintln!(
@@ -415,6 +426,35 @@ fn cleanup_hidden_window<R: Runtime>(window: &WebviewWindow<R>) {
             window.label()
         );
         let _ = window.close();
+    }
+}
+
+#[cfg(target_os = "windows")]
+#[windows::core::implement(ICoreWebView2PrintToPdfCompletedHandler)]
+struct PrintToPdfCompletedHandler {
+    tx: Arc<Mutex<Option<mpsc::Sender<Result<(), String>>>>>,
+}
+
+#[cfg(target_os = "windows")]
+impl ICoreWebView2PrintToPdfCompletedHandler_Impl for PrintToPdfCompletedHandler {
+    fn Invoke(
+        &self,
+        errorcode: windows::core::HRESULT,
+        issuccessful: BOOL,
+    ) -> windows::core::Result<()> {
+        if let Ok(mut slot) = self.tx.lock() {
+            if let Some(sender) = slot.take() {
+                if errorcode.is_ok() && issuccessful.as_bool() {
+                    let _ = sender.send(Ok(()));
+                } else {
+                    let _ = sender.send(Err(format!(
+                        "ERR_PDF_EXPORT_FAILED: WebView2 PrintToPdf 失败, HRESULT: 0x{:x}",
+                        errorcode.0
+                    )));
+                }
+            }
+        }
+        Ok(())
     }
 }
 
@@ -432,16 +472,165 @@ async fn export_pdf_windows(
     );
     let temp_html = create_temp_html_file(&temp_parent, &html)?;
     let temp_html_path = temp_html.path().to_path_buf();
-    let _temp_html_url = Url::from_file_path(&temp_html_path).map_err(|_| {
+    let temp_html_url = Url::from_file_path(&temp_html_path).map_err(|_| {
         format!(
             "ERR_PDF_EXPORT_TEMP_URL_FAILED: {}",
             temp_html_path.display()
         )
     })?;
 
-    // On Windows,WebView2 ICoreWebView2_7::PrintToPdf renders the page to target PDF file.
-    // The implementation receives HTML, navigates to the temp file, and calls PrintToPdf.
-    let _ = app_handle;
+    let load_signal = Arc::new(Mutex::new(None));
+    let (load_tx, load_rx) = mpsc::channel::<Result<(), String>>();
+    if let Ok(mut slot) = load_signal.lock() {
+        *slot = Some(load_tx.clone());
+    }
+
+    let window_label = format!(
+        "pdf-export-win-{}",
+        NEXT_PDF_EXPORT_WINDOW_ID.fetch_add(1, Ordering::Relaxed)
+    );
+
+    let expected_url = temp_html_url.clone();
+    let hidden_window = WebviewWindowBuilder::new(
+        &app_handle,
+        &window_label,
+        WebviewUrl::External(temp_html_url),
+    )
+    .visible(false)
+    .on_page_load(move |_window, payload| {
+        let is_expected_navigation = payload.url().scheme() == "file"
+            && payload
+                .url()
+                .to_file_path()
+                .ok()
+                .zip(expected_url.to_file_path().ok())
+                .is_some_and(|(actual, expected)| actual == expected);
+        if payload.event() == PageLoadEvent::Finished && is_expected_navigation {
+            if let Ok(mut slot) = load_signal.lock() {
+                if let Some(sender) = slot.take() {
+                    let _ = sender.send(Ok(()));
+                }
+            }
+        }
+    })
+    .build()
+    .map_err(|e| format!("ERR_PDF_EXPORT_WINDOW_CREATE_FAILED: {}", e))?;
+
+    match recv_with_timeout(
+        load_rx,
+        Duration::from_secs(60),
+        "ERR_PDF_EXPORT_LOAD_TIMEOUT: PDF 预览加载超时",
+    )
+    .await
+    {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) | Err(error) => {
+            cleanup_hidden_window(&hidden_window);
+            let _ = temp_html.close();
+            return Err(error);
+        }
+    }
+
+    if let Err(error) =
+        tauri::async_runtime::spawn_blocking(|| std::thread::sleep(Duration::from_millis(150)))
+            .await
+            .map_err(|e| format!("ERR_PDF_EXPORT_RUNTIME_FAILED: {}", e))
+    {
+        cleanup_hidden_window(&hidden_window);
+        let _ = temp_html.close();
+        return Err(error);
+    }
+
+    let (pdf_tx, pdf_rx) = mpsc::channel();
+    let window_for_pdf = hidden_window.clone();
+    let save_path_win = save_path.clone();
+
+    if let Err(error) = hidden_window
+        .run_on_main_thread(move || {
+            let pdf_tx_for_webview = pdf_tx.clone();
+            if let Err(error) = window_for_pdf.with_webview(move |platform_webview| {
+                let controller_ptr = platform_webview.inner() as *mut ICoreWebView2Controller;
+                if controller_ptr.is_null() {
+                    let _ = pdf_tx_for_webview.send(Err(
+                        "ERR_PDF_EXPORT_WEBVIEW_UNAVAILABLE: 无法访问原生 WebView".to_string(),
+                    ));
+                    return;
+                }
+
+                let result = unsafe {
+                    let controller = &*controller_ptr;
+                    let webview = match controller.get_CoreWebView2() {
+                        Ok(wv) => wv,
+                        Err(e) => {
+                            let _ = pdf_tx_for_webview.send(Err(format!(
+                                "ERR_PDF_EXPORT_WEBVIEW_ACCESS_FAILED: {}",
+                                e
+                            )));
+                            return;
+                        }
+                    };
+
+                    let webview7: ICoreWebView2_7 = match webview.cast() {
+                        Ok(wv7) => wv7,
+                        Err(e) => {
+                            let _ = pdf_tx_for_webview.send(Err(format!(
+                                "ERR_PDF_EXPORT_WEBVIEW_CAST_FAILED: 无法获取 WebView2_7 接口: {}",
+                                e
+                            )));
+                            return;
+                        }
+                    };
+
+                    let wide_path: Vec<u16> = save_path_win
+                        .encode_utf16()
+                        .chain(std::iter::once(0))
+                        .collect();
+                    let pcwstr = windows::core::PCWSTR(wide_path.as_ptr());
+
+                    let handler: ICoreWebView2PrintToPdfCompletedHandler =
+                        PrintToPdfCompletedHandler {
+                            tx: Arc::new(Mutex::new(Some(pdf_tx_for_webview.clone()))),
+                        }
+                        .into();
+
+                    webview7.PrintToPdf(pcwstr, None, Some(&handler))
+                };
+
+                if let Err(e) = result {
+                    let _ = pdf_tx_for_webview.send(Err(format!("ERR_PDF_EXPORT_FAILED: {}", e)));
+                }
+            }) {
+                let _ = pdf_tx.send(Err(format!(
+                    "ERR_PDF_EXPORT_WEBVIEW_ACCESS_FAILED: {}",
+                    error
+                )));
+            }
+        })
+        .map_err(|e| format!("ERR_PDF_EXPORT_MAIN_THREAD_DISPATCH_FAILED: {}", e))
+    {
+        cleanup_hidden_window(&hidden_window);
+        let _ = temp_html.close();
+        return Err(error);
+    }
+
+    match recv_with_timeout(
+        pdf_rx,
+        Duration::from_secs(60),
+        "ERR_PDF_EXPORT_RENDER_TIMEOUT: PDF 渲染超时",
+    )
+    .await
+    {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) | Err(error) => {
+            cleanup_hidden_window(&hidden_window);
+            let _ = temp_html.close();
+            return Err(error);
+        }
+    }
+
+    cleanup_hidden_window(&hidden_window);
+    let _ = temp_html.close();
+
     let filename = save_path_buf
         .file_name()
         .map(|s| s.to_string_lossy().to_string())

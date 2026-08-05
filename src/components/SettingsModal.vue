@@ -97,9 +97,7 @@ const baseUrlError = computed(() => {
 })
 
 const usernameError = computed(() => {
-  if (!usernameTouched.value) return ''
-  const val = confluenceForm.username.trim()
-  if (!val) return '用户名为必填项'
+  // 用户名为可选字段（例如在企业内部部署 Confluence 使用 Personal Access Token (PAT) 时可留空）
   return ''
 })
 

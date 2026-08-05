@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Markdown Cat",
-  "version": "0.2.0",
-  "identifier": "com.markdowncat.dev",
+  "version": "0.2.1",
+  "identifier": "com.markdowncat.app",
   "build": {
     "beforeDevCommand": "npm run dev",
     "beforeBuildCommand": "npm run build",

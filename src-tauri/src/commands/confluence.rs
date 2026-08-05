@@ -95,12 +95,11 @@ pub async fn publish_confluence(
     let storage_xhtml = payload.storage_xhtml.trim().to_string();
 
     if base_url.is_empty()
-        || username.is_empty()
         || space_key.is_empty()
         || page_title.is_empty()
     {
         return CmdResult::failure(format!(
-            "{}: 请先填写 Confluence 地址、用户名、Space Key 与页面标题。",
+            "{}: 请先填写 Confluence 地址、Space Key 与页面标题。",
             ERR_CONFLUENCE_PUBLISH_CONFIG_INCOMPLETE
         ));
     }
@@ -348,6 +347,130 @@ fn emit_progress(app_handle: &tauri::AppHandle, step: &str, status: &str, messag
     );
 }
 
+pub(crate) async fn send_confluence_get(
+    client: &reqwest::Client,
+    url: &str,
+    username: &str,
+    token: &str,
+    query: Option<&[(&str, &str)]>,
+    headers: Option<&[(&str, &str)]>,
+) -> Result<reqwest::Response, reqwest::Error> {
+    let make_req = |use_bearer: bool| {
+        let mut req = client.get(url);
+        if let Some(q) = query {
+            req = req.query(q);
+        }
+        if let Some(hdrs) = headers {
+            for (k, v) in hdrs {
+                req = req.header(*k, *v);
+            }
+        }
+        if use_bearer || username.trim().is_empty() {
+            req.bearer_auth(token)
+        } else {
+            req.basic_auth(username, Some(token))
+        }
+    };
+
+    let res = make_req(false).send().await?;
+    if res.status() == reqwest::StatusCode::UNAUTHORIZED && !username.trim().is_empty() {
+        if let Ok(bearer_res) = make_req(true).send().await {
+            return Ok(bearer_res);
+        }
+    }
+    Ok(res)
+}
+
+pub(crate) async fn send_confluence_post_json(
+    client: &reqwest::Client,
+    url: &str,
+    username: &str,
+    token: &str,
+    json_body: &Value,
+) -> Result<reqwest::Response, reqwest::Error> {
+    let make_req = |use_bearer: bool| {
+        let req = client
+            .post(url)
+            .header(ACCEPT, "application/json")
+            .header(CONTENT_TYPE, "application/json")
+            .json(json_body);
+        if use_bearer || username.trim().is_empty() {
+            req.bearer_auth(token)
+        } else {
+            req.basic_auth(username, Some(token))
+        }
+    };
+
+    let res = make_req(false).send().await?;
+    if res.status() == reqwest::StatusCode::UNAUTHORIZED && !username.trim().is_empty() {
+        if let Ok(bearer_res) = make_req(true).send().await {
+            return Ok(bearer_res);
+        }
+    }
+    Ok(res)
+}
+
+pub(crate) async fn send_confluence_put_json(
+    client: &reqwest::Client,
+    url: &str,
+    username: &str,
+    token: &str,
+    json_body: &Value,
+) -> Result<reqwest::Response, reqwest::Error> {
+    let make_req = |use_bearer: bool| {
+        let req = client
+            .put(url)
+            .header(ACCEPT, "application/json")
+            .header(CONTENT_TYPE, "application/json")
+            .json(json_body);
+        if use_bearer || username.trim().is_empty() {
+            req.bearer_auth(token)
+        } else {
+            req.basic_auth(username, Some(token))
+        }
+    };
+
+    let res = make_req(false).send().await?;
+    if res.status() == reqwest::StatusCode::UNAUTHORIZED && !username.trim().is_empty() {
+        if let Ok(bearer_res) = make_req(true).send().await {
+            return Ok(bearer_res);
+        }
+    }
+    Ok(res)
+}
+
+pub(crate) async fn send_confluence_post_multipart(
+    client: &reqwest::Client,
+    url: &str,
+    username: &str,
+    token: &str,
+    bytes: Vec<u8>,
+    filename: &str,
+) -> Result<reqwest::Response, reqwest::Error> {
+    let make_req = |use_bearer: bool| {
+        let part = Part::bytes(bytes.clone()).file_name(filename.to_string());
+        let form = Form::new().part("file", part);
+        let req = client
+            .post(url)
+            .header(ACCEPT, "application/json")
+            .header("X-Atlassian-Token", "nocheck")
+            .multipart(form);
+        if use_bearer || username.trim().is_empty() {
+            req.bearer_auth(token)
+        } else {
+            req.basic_auth(username, Some(token))
+        }
+    };
+
+    let res = make_req(false).send().await?;
+    if res.status() == reqwest::StatusCode::UNAUTHORIZED && !username.trim().is_empty() {
+        if let Ok(bearer_res) = make_req(true).send().await {
+            return Ok(bearer_res);
+        }
+    }
+    Ok(res)
+}
+
 async fn lookup_existing_page(
     client: &reqwest::Client,
     base_url: &str,
@@ -358,24 +481,27 @@ async fn lookup_existing_page(
     ignore_ssl: bool,
 ) -> Result<Option<ConfluenceContentSummary>, String> {
     let url = format!("{}/rest/api/content", base_url);
-    let response = client
-        .get(&url)
-        .basic_auth(username, Some(token))
-        .query(&[
-            ("title", page_title),
-            ("spaceKey", space_key),
-            ("expand", "version"),
-        ])
-        .header(ACCEPT, "application/json")
-        .send()
-        .await
-        .map_err(|error| {
-            format!(
-                "{}: {}",
-                ERR_CONFLUENCE_PAGE_LOOKUP_FAILED,
-                format_confluence_request_error(&error, ignore_ssl)
-            )
-        })?;
+    let query = [
+        ("title", page_title),
+        ("spaceKey", space_key),
+        ("expand", "version"),
+    ];
+    let response = send_confluence_get(
+        client,
+        &url,
+        username,
+        token,
+        Some(&query),
+        Some(&[(ACCEPT.as_str(), "application/json")]),
+    )
+    .await
+    .map_err(|error| {
+        format!(
+            "{}: {}",
+            ERR_CONFLUENCE_PAGE_LOOKUP_FAILED,
+            format_confluence_request_error(&error, ignore_ssl)
+        )
+    })?;
 
     if !response.status().is_success() {
         let status = response.status();
@@ -433,21 +559,21 @@ async fn create_page(
         );
     }
 
-    let response = client
-        .post(&url)
-        .basic_auth(username, Some(token))
-        .header(ACCEPT, "application/json")
-        .header(CONTENT_TYPE, "application/json")
-        .json(&Value::Object(body))
-        .send()
-        .await
-        .map_err(|error| {
-            format!(
-                "{}: {}",
-                ERR_CONFLUENCE_PAGE_CREATE_FAILED,
-                format_confluence_request_error(&error, ignore_ssl)
-            )
-        })?;
+    let response = send_confluence_post_json(
+        client,
+        &url,
+        username,
+        token,
+        &Value::Object(body),
+    )
+    .await
+    .map_err(|error| {
+        format!(
+            "{}: {}",
+            ERR_CONFLUENCE_PAGE_CREATE_FAILED,
+            format_confluence_request_error(&error, ignore_ssl)
+        )
+    })?;
 
     if !response.status().is_success() {
         let status = response.status();
@@ -498,21 +624,21 @@ async fn update_page(
         }
     });
 
-    let response = client
-        .put(&url)
-        .basic_auth(username, Some(token))
-        .header(ACCEPT, "application/json")
-        .header(CONTENT_TYPE, "application/json")
-        .json(&body)
-        .send()
-        .await
-        .map_err(|error| {
-            format!(
-                "{}: {}",
-                ERR_CONFLUENCE_PAGE_UPDATE_FAILED,
-                format_confluence_request_error(&error, ignore_ssl)
-            )
-        })?;
+    let response = send_confluence_put_json(
+        client,
+        &url,
+        username,
+        token,
+        &body,
+    )
+    .await
+    .map_err(|error| {
+        format!(
+            "{}: {}",
+            ERR_CONFLUENCE_PAGE_UPDATE_FAILED,
+            format_confluence_request_error(&error, ignore_ssl)
+        )
+    })?;
 
     if !response.status().is_success() {
         let status = response.status();
@@ -558,29 +684,28 @@ async fn upload_attachment(
             )
         })?;
 
-    let part = Part::bytes(bytes).file_name(filename.clone());
-    let form = Form::new().part("file", part);
     let url = format!(
         "{}/rest/api/content/{}/child/attachment",
         base_url, page_id
     );
 
-    let response = client
-        .post(&url)
-        .basic_auth(username, Some(token))
-        .header(ACCEPT, "application/json")
-        .header("X-Atlassian-Token", "nocheck")
-        .multipart(form)
-        .send()
-        .await
-        .map_err(|error| {
-            format!(
-                "{}: 附件 {} 上传失败：{}",
-                ERR_CONFLUENCE_ATTACHMENT_UPLOAD_FAILED,
-                filename,
-                format_confluence_request_error(&error, ignore_ssl)
-            )
-        })?;
+    let response = send_confluence_post_multipart(
+        client,
+        &url,
+        username,
+        token,
+        bytes,
+        &filename,
+    )
+    .await
+    .map_err(|error| {
+        format!(
+            "{}: 附件 {} 上传失败：{}",
+            ERR_CONFLUENCE_ATTACHMENT_UPLOAD_FAILED,
+            filename,
+            format_confluence_request_error(&error, ignore_ssl)
+        )
+    })?;
 
     if !response.status().is_success() {
         let status = response.status();
