@@ -1,9 +1,12 @@
 use crate::commands::doc::SaveResult;
 use crate::commands::CmdResult;
+use std::path::{Path, PathBuf};
+use tauri::AppHandle;
+use tempfile::{Builder as TempFileBuilder, NamedTempFile};
+use url::Url;
 
 #[cfg(target_os = "macos")]
 use std::{
-    path::{Path, PathBuf},
     sync::{
         atomic::{AtomicU64, Ordering},
         mpsc::{self, Receiver, RecvTimeoutError},
@@ -22,11 +25,9 @@ use objc2_foundation::{NSData, NSError, NSString, NSURL};
 use objc2_web_kit::WKWebView;
 #[cfg(target_os = "macos")]
 use tauri::{
-    webview::{PageLoadEvent, Url, WebviewWindow},
-    AppHandle, Runtime, WebviewUrl, WebviewWindowBuilder,
+    webview::{PageLoadEvent, WebviewWindow},
+    Runtime, WebviewUrl, WebviewWindowBuilder,
 };
-#[cfg(target_os = "macos")]
-use tempfile::{Builder as TempFileBuilder, NamedTempFile};
 
 #[cfg(target_os = "macos")]
 static NEXT_PDF_EXPORT_WINDOW_ID: AtomicU64 = AtomicU64::new(1);
