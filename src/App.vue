@@ -74,6 +74,7 @@ const slashMenuPosition = ref({ top: 0, left: 0 })
 
 // Settings Modal 状态
 const isSettingsOpen = ref(false)
+const settingsInitialTab = ref<'general' | 'confluence'>('general')
 const isPublishConfluenceOpen = ref(false)
 const currentSavePath = ref('')
 const activeThemeId = ref(getActiveThemeId())
@@ -543,6 +544,16 @@ async function handleOpenPublishedConfluencePage() {
   }
 }
 
+function openSettingsModal(tab: 'general' | 'confluence' = 'general') {
+  settingsInitialTab.value = tab
+  isSettingsOpen.value = true
+}
+
+function handleOpenConfluenceSettingsFromPublish() {
+  closePublishConfluenceModal()
+  openSettingsModal('confluence')
+}
+
 async function handlePublishConfluence() {
   let unlistenProgress: null | (() => void) = null
 
@@ -553,14 +564,14 @@ async function handlePublishConfluence() {
     if (!configRes.ok || !confluence) {
       saveStatus.value = 'failure'
       saveMessage.value = `读取 Confluence 配置失败：${configRes.error || '未知错误'}`
-      isSettingsOpen.value = true
+      openSettingsModal('confluence')
       return
     }
 
     if (!confluence.baseUrl.trim() || !confluence.username.trim() || !confluence.spaceKey.trim()) {
       saveStatus.value = 'failure'
       saveMessage.value = '发布到 Confluence 前请先在设置中填写地址、用户名与 Space Key'
-      isSettingsOpen.value = true
+      openSettingsModal('confluence')
       return
     }
 
@@ -1417,8 +1428,8 @@ if ((window as any).__TAURI_MOCK__) {
   ;(window as any).__SET_SAVE_MESSAGE__ = (msg: string) => {
     saveMessage.value = msg
   }
-  ;(window as any).__OPEN_SETTINGS__ = () => {
-    isSettingsOpen.value = true
+  ;(window as any).__OPEN_SETTINGS__ = (tab: 'general' | 'confluence' = 'general') => {
+    openSettingsModal(tab)
   }
   ;(window as any).__GET_CURRENT_SAVE_PATH__ = () => {
     return currentSavePath.value
@@ -1453,7 +1464,7 @@ if ((window as any).__TAURI_MOCK__) {
       @export-html="handleExportHtml"
       @export-pdf="handleExportPdf"
       @publish-confluence="handlePublishConfluence"
-      @open-settings="isSettingsOpen = true"
+      @open-settings="openSettingsModal('general')"
       @select-theme="handleThemeSelect"
     />
     <main ref="containerRef" class="editor-workspace">
@@ -1548,6 +1559,7 @@ if ((window as any).__TAURI_MOCK__) {
     <SettingsModal
       :is-open="isSettingsOpen"
       :current-path="currentSavePath"
+      :initial-tab="settingsInitialTab"
       @close="isSettingsOpen = false"
       @update-path="onPathUpdated"
     />
@@ -1561,6 +1573,7 @@ if ((window as any).__TAURI_MOCK__) {
       :warnings="publishProgress.warnings"
       @close="closePublishConfluenceModal"
       @open-page="handleOpenPublishedConfluencePage"
+      @open-settings="handleOpenConfluenceSettingsFromPublish"
     />
   </div>
 </template>

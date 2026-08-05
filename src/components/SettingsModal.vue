@@ -14,18 +14,24 @@ import type {
 const SPACE_KEY_PATTERN = /^[A-Za-z0-9_]+$/
 const PARENT_PAGE_ID_PATTERN = /^[0-9]+$/
 
-const props = defineProps<{
-  isOpen: boolean
-  currentPath: string
-}>()
+const tabOrder = ['general', 'confluence'] as const
+export type SettingsTab = (typeof tabOrder)[number]
+
+const props = withDefaults(
+  defineProps<{
+    isOpen: boolean
+    currentPath: string
+    initialTab?: SettingsTab
+  }>(),
+  {
+    initialTab: 'general',
+  }
+)
 
 const emit = defineEmits<{
   (e: 'close'): void
   (e: 'update-path', newPath: string): void
 }>()
-
-const tabOrder = ['general', 'confluence'] as const
-type SettingsTab = (typeof tabOrder)[number]
 
 const activeTab = ref<SettingsTab>('general')
 const selectedPath = ref('')
@@ -136,7 +142,7 @@ watch(
   () => props.isOpen,
   (open) => {
     if (open) {
-      activeTab.value = 'general'
+      activeTab.value = props.initialTab || 'general'
       selectedPath.value = ''
       errorMessage.value = ''
       resetConfluenceMessages()

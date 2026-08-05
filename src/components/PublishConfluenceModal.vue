@@ -14,6 +14,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'close'): void
   (e: 'open-page'): void
+  (e: 'open-settings'): void
 }>()
 
 function stepStatusText(status: ConfluencePublishProgress['status']) {
@@ -89,6 +90,14 @@ function stepStatusIcon(status: ConfluencePublishProgress['status']) {
       </div>
 
       <div class="modal-footer">
+        <button
+          v-if="props.errorMessage"
+          type="button"
+          class="btn btn-secondary"
+          @click="emit('open-settings')"
+        >
+          前往 Confluence 设置
+        </button>
         <button type="button" class="btn btn-primary confirm-btn" @click="emit('close')">
           {{ props.isRunning ? '隐藏' : '关闭' }}
         </button>
