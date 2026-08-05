@@ -1,6 +1,6 @@
 [package]
 name = "markdown-cat"
-version = "0.2.2"
+version = "0.2.3"
 description = "A portable Markdown editor built with Tauri 2.x and Vue 3"
 license = "MIT"
 repository = ""

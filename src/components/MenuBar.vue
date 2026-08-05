@@ -13,6 +13,7 @@ const emit = defineEmits<{
   (e: 'export-html'): void
   (e: 'export-pdf'): void
   (e: 'publish-confluence'): void
+  (e: 'configure-confluence'): void
   (e: 'open-settings'): void
   (e: 'select-theme', themeId: string): void
 }>()
@@ -124,6 +125,10 @@ function publishConfluence() {
   emit('publish-confluence')
 }
 
+function configureConfluence() {
+  emit('configure-confluence')
+}
+
 function openSettings() {
   emit('open-settings')
 }
@@ -225,6 +230,15 @@ function onMenuRowKeydown(e: KeyboardEvent, action: () => void) {
           @keydown="onMenuRowKeydown($event, publishConfluence)"
         >
           发布到 Confluence…
+        </div>
+        <div
+          class="menu-row"
+          tabindex="0"
+          role="menuitem"
+          @click="configureConfluence"
+          @keydown="onMenuRowKeydown($event, configureConfluence)"
+        >
+          Confluence 发布配置…
         </div>
         <div class="menu-divider"></div>
         <div

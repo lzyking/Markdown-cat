@@ -42,6 +42,7 @@ import type {
   ConfluencePublishPayload,
   ConfluencePublishProgress,
   ConfluencePublishResult,
+  ConfluenceTokenStatus,
   DocumentState,
   Md2cfCheckResult,
   ReadImageAssetResult,
@@ -568,9 +569,18 @@ async function handlePublishConfluence() {
       return
     }
 
-    if (!confluence.baseUrl.trim() || !confluence.username.trim() || !confluence.spaceKey.trim()) {
+    if (!confluence.baseUrl.trim() || !confluence.spaceKey.trim()) {
       saveStatus.value = 'failure'
-      saveMessage.value = '发布到 Confluence 前请先在设置中填写地址、用户名与 Space Key'
+      saveMessage.value = '尚未完成 Confluence 配置，请先在设置中填写地址与 Space Key'
+      openSettingsModal('confluence')
+      return
+    }
+
+    const tokenStatusRes = await invoke<CmdResult<ConfluenceTokenStatus>>('get_confluence_token_status')
+    const hasToken = tokenStatusRes.ok && tokenStatusRes.data?.hasToken
+    if (!hasToken) {
+      saveStatus.value = 'failure'
+      saveMessage.value = '尚未保存 Confluence API Token，请先在设置中保存令牌'
       openSettingsModal('confluence')
       return
     }
@@ -1464,6 +1474,7 @@ if ((window as any).__TAURI_MOCK__) {
       @export-html="handleExportHtml"
       @export-pdf="handleExportPdf"
       @publish-confluence="handlePublishConfluence"
+      @configure-confluence="openSettingsModal('confluence')"
       @open-settings="openSettingsModal('general')"
       @select-theme="handleThemeSelect"
     />
