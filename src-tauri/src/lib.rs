@@ -1,3 +1,6 @@
+#[cfg(target_os = "windows")]
+pub use windows::core as windows_core;
+
 mod commands;
 mod config;
 mod doc;

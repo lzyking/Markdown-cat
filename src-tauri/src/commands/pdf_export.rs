@@ -31,14 +31,11 @@ use tauri::{
 };
 
 #[cfg(target_os = "windows")]
-use webview2_com::Microsoft::Web::WebView2::Win32::{
-    ICoreWebView2Controller, ICoreWebView2PrintToPdfCompletedHandler,
-    ICoreWebView2PrintToPdfCompletedHandler_Impl, ICoreWebView2_7,
-};
+use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2_7;
+#[cfg(target_os = "windows")]
+use webview2_com::PrintToPdfCompletedHandler;
 #[cfg(target_os = "windows")]
 use windows::core::Interface;
-#[cfg(target_os = "windows")]
-use windows::Win32::Foundation::BOOL;
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 static NEXT_PDF_EXPORT_WINDOW_ID: AtomicU64 = AtomicU64::new(1);
@@ -430,35 +427,6 @@ fn cleanup_hidden_window<R: Runtime>(window: &WebviewWindow<R>) {
 }
 
 #[cfg(target_os = "windows")]
-#[windows::core::implement(ICoreWebView2PrintToPdfCompletedHandler)]
-struct PrintToPdfCompletedHandler {
-    tx: Arc<Mutex<Option<mpsc::Sender<Result<(), String>>>>>,
-}
-
-#[cfg(target_os = "windows")]
-impl ICoreWebView2PrintToPdfCompletedHandler_Impl for PrintToPdfCompletedHandler {
-    fn Invoke(
-        &self,
-        errorcode: windows::core::HRESULT,
-        issuccessful: BOOL,
-    ) -> windows::core::Result<()> {
-        if let Ok(mut slot) = self.tx.lock() {
-            if let Some(sender) = slot.take() {
-                if errorcode.is_ok() && issuccessful.as_bool() {
-                    let _ = sender.send(Ok(()));
-                } else {
-                    let _ = sender.send(Err(format!(
-                        "ERR_PDF_EXPORT_FAILED: WebView2 PrintToPdf 失败, HRESULT: 0x{:x}",
-                        errorcode.0
-                    )));
-                }
-            }
-        }
-        Ok(())
-    }
-}
-
-#[cfg(target_os = "windows")]
 async fn export_pdf_windows(
     app_handle: AppHandle,
     html: String,
@@ -549,17 +517,9 @@ async fn export_pdf_windows(
         .run_on_main_thread(move || {
             let pdf_tx_for_webview = pdf_tx.clone();
             if let Err(error) = window_for_pdf.with_webview(move |platform_webview| {
-                let controller_ptr = platform_webview.inner() as *mut ICoreWebView2Controller;
-                if controller_ptr.is_null() {
-                    let _ = pdf_tx_for_webview.send(Err(
-                        "ERR_PDF_EXPORT_WEBVIEW_UNAVAILABLE: 无法访问原生 WebView".to_string(),
-                    ));
-                    return;
-                }
-
+                let controller = platform_webview.controller();
                 let result = unsafe {
-                    let controller = &*controller_ptr;
-                    let webview = match controller.get_CoreWebView2() {
+                    let webview = match controller.CoreWebView2() {
                         Ok(wv) => wv,
                         Err(e) => {
                             let _ = pdf_tx_for_webview.send(Err(format!(
@@ -587,11 +547,24 @@ async fn export_pdf_windows(
                         .collect();
                     let pcwstr = windows::core::PCWSTR(wide_path.as_ptr());
 
-                    let handler: ICoreWebView2PrintToPdfCompletedHandler =
-                        PrintToPdfCompletedHandler {
-                            tx: Arc::new(Mutex::new(Some(pdf_tx_for_webview.clone()))),
-                        }
-                        .into();
+                    let pdf_tx_slot = Arc::new(Mutex::new(Some(pdf_tx_for_webview.clone())));
+                    let handler = PrintToPdfCompletedHandler::create(Box::new(
+                        move |res: windows::core::Result<()>, is_successful: bool| {
+                            if let Ok(mut slot) = pdf_tx_slot.lock() {
+                                if let Some(sender) = slot.take() {
+                                    if res.is_ok() && is_successful {
+                                        let _ = sender.send(Ok(()));
+                                    } else {
+                                        let _ = sender.send(Err(format!(
+                                            "ERR_PDF_EXPORT_FAILED: WebView2 PrintToPdf 失败: {:?}",
+                                            res.err()
+                                        )));
+                                    }
+                                }
+                            }
+                            Ok(())
+                        },
+                    ));
 
                     webview7.PrintToPdf(pcwstr, None, Some(&handler))
                 };
