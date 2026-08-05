@@ -1,20 +1,18 @@
 import { test, expect } from './fixtures'
 
-// TID: S6.2-E2E 主题子菜单选择与配置持久化
+// TID: S6.2-E2E 样式菜单选择与配置持久化
 // Priority: P1
 // 覆盖 Story 6.2 的所有 Acceptance Criteria。
-test.describe('Story 6.2：File 菜单 Theme 子菜单选择与配置持久化', () => {
+test.describe('Story 6.2：样式 菜单 Theme 选择与配置持久化', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/')
     await page.waitForSelector('.source-editor .cm-editor')
   })
 
   async function openThemeSubmenu(page: import('@playwright/test').Page) {
-    const fileMenu = page.locator('.menu-bar .menu-item', { hasText: '文件' })
-    await fileMenu.hover()
-    const themeTrigger = page.locator('.menu-dropdown .submenu-trigger', { hasText: 'Theme' })
-    await themeTrigger.hover()
-    return themeTrigger
+    const themeMenu = page.locator('.menu-bar .menu-item', { hasText: '样式' })
+    await themeMenu.hover()
+    return themeMenu
   }
 
   async function tabUntilFocused(
@@ -35,10 +33,10 @@ test.describe('Story 6.2：File 菜单 Theme 子菜单选择与配置持久化',
 
   // TID: S6.2-E2E-001
   // Priority: P1
-  // AC1: File 菜单集成 Theme 子菜单，划分 Light Themes / Dark Themes 两个小节，各展示 5 种主题。
-  test('Theme 子菜单应展示 Light Themes 与 Dark Themes 两个小节各 5 项', async ({ page }) => {
-    const themeTrigger = await openThemeSubmenu(page)
-    const dropdown = themeTrigger.locator('.submenu-dropdown')
+  // AC1: 样式 菜单，划分 Light Themes / Dark Themes 两个小节，各展示 5 种主题。
+  test('样式 菜单应展示 Light Themes 与 Dark Themes 两个小节各 5 项', async ({ page }) => {
+    const themeMenu = await openThemeSubmenu(page)
+    const dropdown = themeMenu.locator('.menu-dropdown')
     await expect(dropdown).toBeVisible()
 
     const sections = dropdown.locator('.theme-section')
@@ -57,17 +55,17 @@ test.describe('Story 6.2：File 菜单 Theme 子菜单选择与配置持久化',
   // Priority: P1
   // AC2: 当前激活主题左侧显示对勾，点击任意主题项立即切换根节点 data-theme 属性。
   test('点击主题项应立即切换 data-theme 并在对应项显示勾选标记', async ({ page }) => {
-    const themeTrigger = await openThemeSubmenu(page)
-    const dropdown = themeTrigger.locator('.submenu-dropdown')
+    const themeMenu = await openThemeSubmenu(page)
+    const dropdown = themeMenu.locator('.menu-dropdown')
 
     const targetOption = dropdown.locator('.theme-option', { hasText: 'Cyberpunk Dark' })
     await targetOption.click()
 
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'cyberpunk-dark')
 
-    // 重新打开子菜单验证勾选标记跟随当前激活主题
+    // 重新打开菜单验证勾选标记跟随当前激活主题
     await openThemeSubmenu(page)
-    const reopenedDropdown = page.locator('.menu-dropdown .submenu-trigger', { hasText: 'Theme' }).locator('.submenu-dropdown')
+    const reopenedDropdown = page.locator('.menu-bar .menu-item', { hasText: '样式' }).locator('.menu-dropdown')
     const checkedOption = reopenedDropdown.locator('.theme-option', { hasText: 'Cyberpunk Dark' })
     await expect(checkedOption.locator('.menu-check')).toHaveText('✓')
 
@@ -79,8 +77,8 @@ test.describe('Story 6.2：File 菜单 Theme 子菜单选择与配置持久化',
   // Priority: P1
   // AC3: 选中的 themeId 写入本地配置文件，应用重启后自动加载应用该主题。
   test('选择主题应通过 set_config 持久化，且重启后自动加载已保存的主题', async ({ page }) => {
-    const themeTrigger = await openThemeSubmenu(page)
-    const dropdown = themeTrigger.locator('.submenu-dropdown')
+    const themeMenu = await openThemeSubmenu(page)
+    const dropdown = themeMenu.locator('.menu-dropdown')
 
     await dropdown.locator('.theme-option', { hasText: 'Nord Light' }).click()
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'nord-light')
@@ -106,21 +104,23 @@ test.describe('Story 6.2：File 菜单 Theme 子菜单选择与配置持久化',
 
   // TID: S6.2-E2E-004
   // Priority: P1
-  // DW-37/DW-38: 纯键盘 Tab 链路可到达 File 菜单、Theme 子菜单及首个主题按钮，并可用 Enter 完成主题切换与 Escape 收起菜单。
-  test('纯键盘 Tab 链路应可进入 File 菜单与 Theme 子菜单并完成主题切换', async ({ page }) => {
+  // DW-37/DW-38: 纯键盘 Tab 链路可到达 File 菜单与 样式 菜单及首个主题按钮，并可用 Enter 完成主题切换与 Escape 收起菜单。
+  test('纯键盘 Tab 链路应可进入 File 菜单与 样式 菜单并完成主题切换', async ({ page }) => {
     const topLevelMenus = page.locator('.menu-bar .menu-item')
     const markdownCatMenu = topLevelMenus.filter({ hasText: 'Markdown Cat' })
     const markdownCatDropdown = markdownCatMenu.locator('.menu-dropdown')
     const markdownCatSettingsRow = markdownCatDropdown.locator('.menu-row', { hasText: '设置保存路径…' })
     const fileMenu = topLevelMenus.filter({ hasText: '文件' })
     const fileDropdown = fileMenu.locator('.menu-dropdown')
+    const newRow = fileDropdown.locator('.menu-row', { hasText: '新建 (New)' })
     const openRow = fileDropdown.locator('.menu-row', { hasText: '打开文件 (Open)…' })
-    const themeTrigger = fileDropdown.locator('.submenu-trigger', { hasText: 'Theme' })
-    const themeDropdown = themeTrigger.locator('.submenu-dropdown')
+    const themeMenu = topLevelMenus.filter({ hasText: '样式' })
+    const themeDropdown = themeMenu.locator('.menu-dropdown')
     const firstThemeOption = themeDropdown.locator('.theme-option').first()
 
     await expect(markdownCatDropdown).toHaveAttribute('role', 'menu')
     await expect(fileDropdown).toHaveAttribute('role', 'menu')
+    await expect(themeDropdown).toHaveAttribute('role', 'menu')
 
     await tabUntilFocused(page, markdownCatMenu)
     await expect(markdownCatDropdown).toBeVisible()
@@ -136,22 +136,23 @@ test.describe('Story 6.2：File 菜单 Theme 子菜单选择与配置持久化',
     await expect(fileMenu).toHaveAttribute('aria-expanded', 'true')
 
     await page.keyboard.press('Tab')
-    await expect(openRow).toBeFocused()
+    await expect(newRow).toBeFocused()
     await expect(fileDropdown).toBeVisible()
     await expect(fileMenu).toHaveAttribute('aria-expanded', 'true')
 
-    await tabUntilFocused(page, themeTrigger)
-    await expect(themeTrigger).toBeFocused()
-    await expect(fileDropdown).toBeVisible()
-    await expect(themeTrigger).toHaveAttribute('aria-expanded', 'true')
+    await page.keyboard.press('Tab')
+    await expect(openRow).toBeFocused()
+
+    await tabUntilFocused(page, themeMenu)
+    await expect(themeMenu).toBeFocused()
+    await expect(themeMenu).toHaveAttribute('aria-expanded', 'true')
 
     const themeIdBeforeSelection = await page.locator('html').getAttribute('data-theme')
 
-    await page.keyboard.press('Enter')
+    await page.keyboard.press('Tab')
     await expect(themeDropdown).toBeVisible()
     await expect(firstThemeOption).toBeFocused()
-    await expect(themeTrigger).toHaveAttribute('aria-expanded', 'true')
-    await expect(fileMenu).toHaveAttribute('aria-expanded', 'true')
+    await expect(themeMenu).toHaveAttribute('aria-expanded', 'true')
 
     await firstThemeOption.press('Enter')
     await expect(firstThemeOption.locator('.menu-check')).toHaveText('✓')
@@ -161,10 +162,8 @@ test.describe('Story 6.2：File 菜单 Theme 子菜单选择与配置持久化',
 
     await page.keyboard.press('Escape')
     await expect(firstThemeOption).not.toBeFocused()
-    await expect(fileDropdown).toBeHidden()
     await expect(themeDropdown).toBeHidden()
-    await expect(fileMenu).toHaveAttribute('aria-expanded', 'false')
-    await expect(themeTrigger).toHaveAttribute('aria-expanded', 'false')
+    await expect(themeMenu).toHaveAttribute('aria-expanded', 'false')
   })
 
   // TID: S6.2-E2E-005

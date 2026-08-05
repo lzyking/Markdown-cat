@@ -793,6 +793,32 @@ async function loadFileFromPath(filePath: string) {
   }
 }
 
+async function handleNewFile() {
+  try {
+    const requestToken = ++openRequestToken.value
+    const result = await invoke<CmdResult<DocumentState>>('get_blank_document')
+    if (!isLatestOpenRequest(requestToken, openRequestToken.value)) {
+      return
+    }
+    activeDocumentId.value += 1
+    currentFilePath.value = ''
+    if (result.ok && result.data) {
+      filename.value = result.data.filename
+      content.value = result.data.content
+    } else {
+      filename.value = 'New_Untitled.md'
+      content.value = ''
+    }
+    saveStatus.value = 'unsaved'
+    saveMessage.value = ''
+    if (!(window as any).__TAURI_MOCK__) {
+      await invoke('update_last_opened_file', { filePath: null })
+    }
+  } catch (err: any) {
+    console.error('Failed to create new file:', err)
+  }
+}
+
 async function handleOpenFile() {
   try {
     const selected = await openDialog({
@@ -1421,6 +1447,7 @@ if ((window as any).__TAURI_MOCK__) {
     <TitleBar :filename="filename" :save-status="saveStatus" />
     <MenuBar
       :active-theme-id="activeThemeId"
+      @new-file="handleNewFile"
       @open-file="handleOpenFile"
       @save-as-file="handleSaveAsFile"
       @export-html="handleExportHtml"

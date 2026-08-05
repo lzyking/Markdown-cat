@@ -7,6 +7,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
+  (e: 'new-file'): void
   (e: 'open-file'): void
   (e: 'save-as-file'): void
   (e: 'export-html'): void
@@ -79,7 +80,7 @@ function useHoverFocusExpanded() {
 
 const markdownCatMenuExpanded = useHoverFocusExpanded()
 const fileMenuExpanded = useHoverFocusExpanded()
-const themeSubmenuExpanded = useHoverFocusExpanded()
+const themeMenuExpanded = useHoverFocusExpanded()
 
 function resolveFocusableElement(el: Element | ComponentPublicInstance | null) {
   if (el instanceof HTMLElement) {
@@ -97,6 +98,10 @@ function setFirstThemeOptionRef(el: Element | ComponentPublicInstance | null, th
   if (themeId === firstFocusableThemeId) {
     firstThemeOptionRef.value = resolveFocusableElement(el)
   }
+}
+
+function newFile() {
+  emit('new-file')
 }
 
 function openFile() {
@@ -131,26 +136,6 @@ function onMenuRowKeydown(e: KeyboardEvent, action: () => void) {
   if (e.key === 'Enter' || e.key === ' ') {
     e.preventDefault()
     action()
-    return
-  }
-
-  if (e.key === 'Escape') {
-    ;(e.currentTarget as HTMLElement).blur()
-  }
-}
-
-function focusFirstThemeOption() {
-  firstThemeOptionRef.value?.focus()
-}
-
-function onSubmenuTriggerKeydown(e: KeyboardEvent) {
-  if (e.target !== e.currentTarget) {
-    return
-  }
-
-  if (e.key === 'Enter' || e.key === ' ' || e.key === 'ArrowRight') {
-    e.preventDefault()
-    focusFirstThemeOption()
     return
   }
 
@@ -199,6 +184,9 @@ function onSubmenuTriggerKeydown(e: KeyboardEvent) {
     >
       文件
       <div class="menu-dropdown" role="menu" aria-label="文件">
+        <div class="menu-row" tabindex="0" role="menuitem" @click="newFile" @keydown="onMenuRowKeydown($event, newFile)">
+          新建 (New)
+        </div>
         <div class="menu-row" tabindex="0" role="menuitem" @click="openFile" @keydown="onMenuRowKeydown($event, openFile)">
           打开文件 (Open)…
         </div>
@@ -240,62 +228,6 @@ function onSubmenuTriggerKeydown(e: KeyboardEvent) {
         </div>
         <div class="menu-divider"></div>
         <div
-          class="menu-row submenu-trigger"
-          tabindex="0"
-          role="menuitem"
-          aria-haspopup="true"
-          :aria-expanded="themeSubmenuExpanded.isOpen.value"
-          @mouseenter="themeSubmenuExpanded.onMouseEnter"
-          @mouseleave="themeSubmenuExpanded.onMouseLeave"
-          @focusin="themeSubmenuExpanded.onFocusIn"
-          @focusout="themeSubmenuExpanded.onFocusOut"
-          @keydown="onSubmenuTriggerKeydown"
-        >
-          <span>Theme</span>
-          <span class="submenu-arrow" aria-hidden="true">›</span>
-          <div class="submenu-dropdown" role="menu" aria-label="Theme">
-            <div class="theme-section">
-              <div class="menu-section-label">Light Themes</div>
-              <button
-                v-for="theme in lightThemes"
-                :key="theme.id"
-                type="button"
-                class="theme-option"
-                role="menuitemradio"
-                :aria-checked="props.activeThemeId === theme.id"
-                :ref="(el) => setFirstThemeOptionRef(el, theme.id)"
-                @click.stop="selectTheme(theme.id)"
-                @keydown.esc="($event.currentTarget as HTMLElement)?.blur()"
-              >
-                <span class="menu-check" aria-hidden="true">
-                  {{ props.activeThemeId === theme.id ? '✓' : '' }}
-                </span>
-                <span>{{ theme.name }}</span>
-              </button>
-            </div>
-            <div class="menu-divider"></div>
-            <div class="theme-section">
-              <div class="menu-section-label">Dark Themes</div>
-              <button
-                v-for="theme in darkThemes"
-                :key="theme.id"
-                type="button"
-                class="theme-option"
-                role="menuitemradio"
-                :aria-checked="props.activeThemeId === theme.id"
-                @click.stop="selectTheme(theme.id)"
-                @keydown.esc="($event.currentTarget as HTMLElement)?.blur()"
-              >
-                <span class="menu-check" aria-hidden="true">
-                  {{ props.activeThemeId === theme.id ? '✓' : '' }}
-                </span>
-                <span>{{ theme.name }}</span>
-              </button>
-            </div>
-          </div>
-        </div>
-        <div class="menu-divider"></div>
-        <div
           class="menu-row"
           tabindex="0"
           role="menuitem"
@@ -306,9 +238,60 @@ function onSubmenuTriggerKeydown(e: KeyboardEvent) {
         </div>
       </div>
     </div>
-    <div class="menu-item disabled" role="menuitem" aria-disabled="true">编辑</div>
+    <div
+      class="menu-item"
+      tabindex="0"
+      role="menuitem"
+      aria-haspopup="true"
+      :aria-expanded="themeMenuExpanded.isOpen.value"
+      @mouseenter="themeMenuExpanded.onMouseEnter"
+      @mouseleave="themeMenuExpanded.onMouseLeave"
+      @focusin="themeMenuExpanded.onFocusIn"
+      @focusout="themeMenuExpanded.onFocusOut"
+    >
+      样式
+      <div class="menu-dropdown" role="menu" aria-label="样式">
+        <div class="theme-section">
+          <div class="menu-section-label">Light Themes</div>
+          <button
+            v-for="theme in lightThemes"
+            :key="theme.id"
+            type="button"
+            class="theme-option"
+            role="menuitemradio"
+            :aria-checked="props.activeThemeId === theme.id"
+            :ref="(el) => setFirstThemeOptionRef(el, theme.id)"
+            @click.stop="selectTheme(theme.id)"
+            @keydown.esc="($event.currentTarget as HTMLElement)?.blur()"
+          >
+            <span class="menu-check" aria-hidden="true">
+              {{ props.activeThemeId === theme.id ? '✓' : '' }}
+            </span>
+            <span>{{ theme.name }}</span>
+          </button>
+        </div>
+        <div class="menu-divider"></div>
+        <div class="theme-section">
+          <div class="menu-section-label">Dark Themes</div>
+          <button
+            v-for="theme in darkThemes"
+            :key="theme.id"
+            type="button"
+            class="theme-option"
+            role="menuitemradio"
+            :aria-checked="props.activeThemeId === theme.id"
+            @click.stop="selectTheme(theme.id)"
+            @keydown.esc="($event.currentTarget as HTMLElement)?.blur()"
+          >
+            <span class="menu-check" aria-hidden="true">
+              {{ props.activeThemeId === theme.id ? '✓' : '' }}
+            </span>
+            <span>{{ theme.name }}</span>
+          </button>
+        </div>
+      </div>
+    </div>
     <div class="menu-item disabled" role="menuitem" aria-disabled="true">视图</div>
-    <div class="menu-item disabled" role="menuitem" aria-disabled="true">帮助</div>
   </div>
 </template>
 
