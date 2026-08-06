@@ -72,3 +72,13 @@ test('uses image alt text for aria-label when a task item contains only an image
   assert.ok(checkbox)
   assert.equal(checkbox['aria-label'], '截图说明')
 })
+
+test('generates slug ids for headings supporting Chinese and English and duplicate handling', () => {
+  const markdown = '# 1. 快速开始 (Quick Start)!\n\n## 章节一：介绍\n\n## 章节一：介绍'
+  const { html } = renderMarkdown(markdown)
+
+  assert.match(html, /<h1 id="1-快速开始-quick-start">1\. 快速开始 \(Quick Start\)!<\/h1>/)
+  assert.match(html, /<h2 id="章节一介绍">章节一：介绍<\/h2>/)
+  assert.match(html, /<h2 id="章节一介绍-1">章节一：介绍<\/h2>/)
+})
+

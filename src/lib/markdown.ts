@@ -68,15 +68,43 @@ function createRenderNonce(): string {
 }
 
 /**
+ * 将标题文本转码为符合 GFM 规范的 slug ID（支持中英文字符、数字及连字符）。
+ */
+export function slugifyHeading(text: string): string {
+  const plainText = text.replace(/<[^>]+>/g, '')
+  const slug = plainText
+    .toLowerCase()
+    .trim()
+    .replace(/[^\p{L}\p{N}\s-]/gu, '')
+    .replace(/\s+/g, '-')
+    .replace(/-+/g, '-')
+  return slug || 'heading'
+}
+
+/**
  * 每次渲染独立的 Renderer 实例，避免共享的模块级可变状态
  * （例如此前的模块级计数器）在潜在的重入/并发渲染场景下产生错乱。
  */
 class TaskAwareRenderer extends Renderer {
   private taskIndex = 0
   private pendingCheckboxIds: string[] = []
+  private slugMap = new Map<string, number>()
 
   constructor(private readonly nonce: string) {
     super()
+  }
+
+  heading(text: string, level: number, raw: string): string {
+    const slugBase = slugifyHeading(text || raw)
+    let slug = slugBase
+    if (this.slugMap.has(slugBase)) {
+      const count = this.slugMap.get(slugBase)! + 1
+      this.slugMap.set(slugBase, count)
+      slug = `${slugBase}-${count}`
+    } else {
+      this.slugMap.set(slugBase, 0)
+    }
+    return `<h${level} id="${slug}">${text}</h${level}>\n`
   }
 
   checkbox(checked: boolean): string {

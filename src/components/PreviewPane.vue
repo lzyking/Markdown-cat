@@ -4,6 +4,7 @@ import { convertFileSrc } from '@tauri-apps/api/core'
 import { renderMarkdown } from '../lib/markdown'
 import { isRelativeAssetPath, resolveRelativeAssetPath } from '../lib/image-assets'
 import { decoratePreviewHtml, getResponsivePreviewStyle, resolveResponsiveLayout, type PreviewLayout } from '../lib/preview'
+import { openExternalUrl } from '../lib/tauri'
 
 const props = defineProps<{
   content: string
@@ -64,6 +65,50 @@ const responsiveStyle = computed<Record<string, string>>(() => getResponsivePrev
 // TODO: i18n — extract to locale key (e.g. 'preview.emptyState')
 const EMPTY_STATE_TEXT = '开始输入 Markdown，右侧将实时预览。'
 
+function handleAnchorClick(href: string) {
+  const rawId = href.slice(1)
+  if (!rawId) {
+    if (previewPaneRef.value) {
+      previewPaneRef.value.scrollTop = 0
+    }
+    return
+  }
+
+  let decodedId = rawId
+  try {
+    decodedId = decodeURIComponent(rawId)
+  } catch {
+    // 解码失败时保留原字符串
+  }
+
+  if (!previewPaneRef.value) {
+    return
+  }
+
+  const escapedId = typeof CSS !== 'undefined' && CSS.escape ? CSS.escape(decodedId) : decodedId.replace(/["\\]/g, '\\$&')
+  const targetEl = previewPaneRef.value.querySelector(`#${escapedId}, [name="${escapedId}"]`)
+  if (targetEl) {
+    targetEl.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
+}
+
+function handleExternalLinkClick(href: string) {
+  if (href.toLowerCase().startsWith('javascript:')) {
+    return
+  }
+
+  let targetUrl = href
+  if (props.documentBaseDir && isRelativeAssetPath(href)) {
+    const absolutePath = resolveRelativeAssetPath(props.documentBaseDir, href)
+    const normalized = absolutePath.replace(/\\/g, '/')
+    targetUrl = normalized.startsWith('/') ? `file://${normalized}` : `file:///${normalized}`
+  }
+
+  openExternalUrl(targetUrl).catch((err) => {
+    console.error('Failed to open external link:', err)
+  })
+}
+
 function onPreviewClick(event: MouseEvent) {
   const target = event.target
   if (!(target instanceof Element)) {
@@ -88,6 +133,16 @@ function onPreviewClick(event: MouseEvent) {
   const link = target.closest('a')
   if (link) {
     event.preventDefault()
+    const href = link.getAttribute('href')
+    if (!href) {
+      return
+    }
+
+    if (href.startsWith('#')) {
+      handleAnchorClick(href)
+    } else {
+      handleExternalLinkClick(href)
+    }
   }
 }
 

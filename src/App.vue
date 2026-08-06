@@ -2,7 +2,6 @@
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
-import { openUrl } from '@tauri-apps/plugin-opener'
 import TitleBar from './components/TitleBar.vue'
 import MenuBar from './components/MenuBar.vue'
 import StatusBar from './components/StatusBar.vue'
@@ -33,6 +32,7 @@ import {
   replaceSiblingImageReferenceFilename,
 } from './lib/image-assets'
 import { openDialog, saveDialog } from './lib/tauri-dialog'
+import { openExternalUrl } from './lib/tauri'
 import type {
   AppConfig,
   AssetMigrationResult,
@@ -373,12 +373,7 @@ async function readLocalImageForPublish(absolutePath: string) {
 }
 
 async function openPublishedPage(url: string) {
-  const tauriMock = (window as any).__TAURI_MOCK__
-  if (tauriMock?.openUrl) {
-    await tauriMock.openUrl(url)
-    return
-  }
-  await openUrl(url)
+  await openExternalUrl(url)
 }
 
 async function handleExportHtml() {
