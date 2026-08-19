@@ -31,6 +31,7 @@ const items: SlashMenuItem[] = [
   { id: 'task', label: 'Task List 任务列表', shortcut: '- [ ] ', template: '- [ ] ' },
 ]
 
+const menuRef = ref<HTMLElement | null>(null)
 const selectedIndex = ref(0)
 
 function select(item: SlashMenuItem) {
@@ -47,23 +48,35 @@ function handleKeyDown(e: KeyboardEvent) {
   } else if (e.key === 'Enter') {
     e.preventDefault()
     select(items[selectedIndex.value])
-  } else if (e.key === 'Escape') {
+  } else if (e.key === 'Escape' || e.key === 'Esc') {
     e.preventDefault()
+    e.stopPropagation()
+    emit('close')
+  }
+}
+
+function handleClickOutside(e: Event) {
+  if (menuRef.value && !menuRef.value.contains(e.target as Node)) {
     emit('close')
   }
 }
 
 onMounted(() => {
   window.addEventListener('keydown', handleKeyDown, true)
+  setTimeout(() => {
+    window.addEventListener('pointerdown', handleClickOutside, true)
+  }, 0)
 })
 
 onUnmounted(() => {
   window.removeEventListener('keydown', handleKeyDown, true)
+  window.removeEventListener('pointerdown', handleClickOutside, true)
 })
 </script>
 
 <template>
   <div
+    ref="menuRef"
     class="slash-menu"
     :style="{ top: `${position.top}px`, left: `${position.left}px` }"
     role="menu"

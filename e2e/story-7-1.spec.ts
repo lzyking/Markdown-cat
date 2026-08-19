@@ -60,6 +60,31 @@ test.describe('Story 7.1：斜杠菜单任务列表与预览交互', () => {
     expect(content).toBe('- [ ] ')
   })
 
+  test('按 Escape 键应可关闭斜杠菜单', async ({ page }) => {
+    const editor = page.locator('.cm-content')
+    await editor.click()
+    await page.keyboard.press('/')
+
+    const slashMenu = page.locator('.slash-menu')
+    await expect(slashMenu).toBeVisible()
+
+    await page.keyboard.press('Escape')
+    await expect(slashMenu).toHaveCount(0)
+  })
+
+  test('点击斜杠菜单外部区域应可关闭斜杠菜单', async ({ page }) => {
+    const editor = page.locator('.cm-content')
+    await editor.click()
+    await page.keyboard.press('/')
+
+    const slashMenu = page.locator('.slash-menu')
+    await expect(slashMenu).toBeVisible()
+
+    // 点击菜单外部的预览区或空白处
+    await page.locator('.preview-pane').click({ position: { x: 10, y: 10 } })
+    await expect(slashMenu).toHaveCount(0)
+  })
+
   test('行中间触发斜杠菜单时应将模板插入到当前行行首', async ({ page }) => {
     const editor = page.locator('.source-editor .cm-content')
     await editor.click()
