@@ -57,6 +57,10 @@ test.describe('Story 11.1：Confluence 表单校验与 Token 安全提示', () =
     })
     await page.locator('.tab-btn', { hasText: 'Confluence' }).click()
 
+    // 已有配置时会自动进入第 2 步；需先返回“编辑连接信息”才能看到 Base URL 表单。
+    await expect(page.locator('.connection-status')).toBeVisible()
+    await page.locator('button', { hasText: '编辑连接信息' }).click()
+
     // 初始状态下不显示 Notice Banner
     await expect(page.locator('.notice-banner')).not.toBeVisible()
 

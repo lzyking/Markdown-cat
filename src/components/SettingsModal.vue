@@ -3,16 +3,14 @@ import { computed, nextTick, onUnmounted, reactive, ref, watch, type ComponentPu
 import { invoke } from '@tauri-apps/api/core'
 import { open as openDialog } from '@tauri-apps/plugin-dialog'
 import { withDirtyTrackingSuppressed } from '../lib/confluence-dirty-guard'
+import ConfluenceSpaceBrowser from './ConfluenceSpaceBrowser.vue'
 import type {
   CmdResult,
   ConfluenceConfig,
-  ConfluenceTestResult,
+  ConfluencePatConnectionResult,
   ConfluenceTokenStatus,
   Md2cfCheckResult,
 } from '../lib/types'
-
-const SPACE_KEY_PATTERN = /^[A-Za-z0-9_]+$/
-const PARENT_PAGE_ID_PATTERN = /^[0-9]+$/
 
 const tabOrder = ['general', 'confluence'] as const
 export type SettingsTab = (typeof tabOrder)[number]
@@ -42,18 +40,20 @@ const tokenInput = ref('')
 const hasStoredToken = ref(false)
 const isSavingConfluence = ref(false)
 const isClearingToken = ref(false)
+const isClearingAllConfluenceSettings = ref(false)
 const isTestingConnection = ref(false)
 const md2cfMessage = ref('')
 const md2cfInstalled = ref<boolean | null>(null)
 const connectionMessage = ref('')
 const connectionSucceeded = ref<boolean | null>(null)
-const spaceKeyTouched = ref(false)
-const parentPageIdTouched = ref(false)
 const baseUrlTouched = ref(false)
-const usernameTouched = ref(false)
 const confluenceFormDirty = ref(false)
 const suppressConfluenceDirtyTracking = ref(false)
 const tabButtonRefs = ref<Array<HTMLButtonElement | null>>([])
+const confluenceStep = ref<'connection' | 'browse'>('connection')
+const patCurrentUserDisplayName = ref('')
+const advancedOptionsOpen = ref(false)
+const diagnosticsOpen = ref(false)
 
 const loadedConfluenceConfig = ref<{ baseUrl: string; username: string }>({
   baseUrl: '',
@@ -102,25 +102,6 @@ const baseUrlError = computed(() => {
   return ''
 })
 
-const usernameError = computed(() => {
-  // 用户名为可选字段（例如在企业内部部署 Confluence 使用 Personal Access Token (PAT) 时可留空）
-  return ''
-})
-
-const spaceKeyError = computed(() => {
-  if (!spaceKeyTouched.value) return ''
-  const val = confluenceForm.spaceKey.trim()
-  if (!val) return 'Space Key 为必填项'
-  return SPACE_KEY_PATTERN.test(val) ? '' : 'Space Key 仅支持字母、数字和下划线'
-})
-
-const parentPageIdError = computed(() => {
-  if (!parentPageIdTouched.value || !confluenceForm.parentPageId) return ''
-  return PARENT_PAGE_ID_PATTERN.test(confluenceForm.parentPageId.trim())
-    ? ''
-    : 'Parent Page ID 仅支持数字'
-})
-
 const isCredentialsServerChanged = computed(() => {
   if (!hasStoredToken.value) return false
   if (!loadedConfluenceConfig.value.baseUrl && !loadedConfluenceConfig.value.username) return false
@@ -161,13 +142,14 @@ function resetConfluenceMessages() {
   confluenceSuccessMessage.value = ''
   connectionMessage.value = ''
   connectionSucceeded.value = null
+  patCurrentUserDisplayName.value = ''
   md2cfMessage.value = ''
   md2cfInstalled.value = null
   tokenInput.value = ''
-  spaceKeyTouched.value = false
-  parentPageIdTouched.value = false
   baseUrlTouched.value = false
-  usernameTouched.value = false
+  confluenceStep.value = 'connection'
+  advancedOptionsOpen.value = false
+  diagnosticsOpen.value = false
   withDirtyTrackingSuppressed(suppressConfluenceDirtyTracking, () => {
     confluenceForm.baseUrl = ''
     confluenceForm.username = ''
@@ -230,6 +212,13 @@ async function loadConfluenceSettings() {
         ? tokenStatusOutcome.value.error
         : tokenStatusOutcome.reason?.message
     confluenceErrorMessage.value = `读取令牌状态失败：${reason || '未知错误'}`
+  }
+
+  if (!confluenceFormDirty.value) {
+    confluenceStep.value = confluenceForm.baseUrl.trim() ? 'browse' : 'connection'
+    if (confluenceStep.value === 'browse') {
+      void onTestPatConnection()
+    }
   }
 }
 
@@ -336,7 +325,11 @@ async function onConfirm() {
     return
   }
 
-  await onConfirmConfluence()
+  if (confluenceStep.value === 'connection') {
+    await onSaveConnection()
+  } else {
+    onClose()
+  }
 }
 
 async function onConfirmGeneral() {
@@ -357,10 +350,10 @@ async function onConfirmGeneral() {
   }
 }
 
-async function onConfirmConfluence() {
-  touchConfluenceValidators()
+async function onSaveConnection() {
+  baseUrlTouched.value = true
   resetConfluenceFeedback()
-  if (baseUrlError.value || usernameError.value || spaceKeyError.value || parentPageIdError.value) {
+  if (baseUrlError.value) {
     confluenceErrorMessage.value = '请先修正 Confluence 配置中的格式错误'
     return
   }
@@ -391,15 +384,58 @@ async function onConfirmConfluence() {
         confluenceErrorMessage.value = `Confluence 配置已保存，但安全令牌保存失败：${tokenRes.error || '未知错误'}`
         return
       }
-      hasStoredToken.value = true
       tokenInput.value = ''
+      // 以独立的 get_confluence_token_status 读取作为真实持久化依据，而非乐观地假定写入成功就一定可读回。
+      const statusRes = await invoke<CmdResult<ConfluenceTokenStatus>>('get_confluence_token_status')
+      hasStoredToken.value = statusRes.ok ? !!statusRes.data?.hasToken : false
+      if (!hasStoredToken.value) {
+        confluenceErrorMessage.value =
+          'Token 写入请求返回成功，但随后独立读取确认未找到已保存的令牌（可能为系统安全存储访问问题）。'
+        return
+      }
     }
 
-    confluenceSuccessMessage.value = 'Confluence 配置已保存'
+    confluenceSuccessMessage.value = 'Confluence 连接信息已保存'
+    confluenceStep.value = 'browse'
+    void onTestPatConnection()
   } catch (err: any) {
     confluenceErrorMessage.value = `Confluence 配置保存异常：${err?.message || '系统错误'}`
   } finally {
     isSavingConfluence.value = false
+  }
+}
+
+function onEditConnection() {
+  confluenceStep.value = 'connection'
+}
+
+async function onSpaceBrowserSelect(payload: {
+  spaceKey: string
+  parentPageId: string
+  parentTitle: string
+}) {
+  resetConfluenceFeedback()
+  withDirtyTrackingSuppressed(suppressConfluenceDirtyTracking, () => {
+    confluenceForm.spaceKey = payload.spaceKey
+    confluenceForm.parentPageId = payload.parentPageId
+  })
+  try {
+    const res = await invoke<CmdResult<null>>('set_confluence_config', {
+      confluence: {
+        baseUrl: confluenceForm.baseUrl.trim(),
+        username: confluenceForm.username.trim(),
+        spaceKey: confluenceForm.spaceKey.trim(),
+        parentPageId: confluenceForm.parentPageId.trim(),
+        ignoreSsl: confluenceForm.ignoreSsl,
+      },
+    })
+    if (res.ok) {
+      confluenceSuccessMessage.value = `已保存：Space ${payload.spaceKey}，父页面 ${payload.parentTitle}`
+    } else {
+      confluenceErrorMessage.value = `保存 Space/页面选择失败：${res.error || '未知错误'}`
+    }
+  } catch (err: any) {
+    confluenceErrorMessage.value = `保存 Space/页面选择异常：${err?.message || '系统错误'}`
   }
 }
 
@@ -422,61 +458,72 @@ async function onClearToken() {
   }
 }
 
-async function onTestConnection() {
-  touchConfluenceValidators()
+async function onTestPatConnection() {
   resetConfluenceFeedback()
-
-  if (baseUrlError.value || usernameError.value || spaceKeyError.value || parentPageIdError.value) {
-    confluenceErrorMessage.value = '请先修正 Confluence 配置中的格式错误'
-    return
-  }
-
   isTestingConnection.value = true
   try {
-    const md2cfRes = await invoke<CmdResult<Md2cfCheckResult>>('check_md2cf_installed')
-    if (md2cfRes.ok && md2cfRes.data) {
-      md2cfInstalled.value = md2cfRes.data.installed
-      md2cfMessage.value = md2cfRes.data.message
-    } else {
-      md2cfInstalled.value = false
-      md2cfMessage.value = `md2cf 检测失败：${md2cfRes.error || '未知错误'}`
-    }
+    const res = await invoke<CmdResult<ConfluencePatConnectionResult>>(
+      'test_confluence_pat_connection',
+      {
+        payload: {
+          baseUrl: confluenceForm.baseUrl.trim(),
+          username: confluenceForm.username.trim() || undefined,
+          apiToken: tokenInput.value.trim() || undefined,
+          ignoreSsl: confluenceForm.ignoreSsl,
+        },
+      }
+    )
 
-    const testRes = await invoke<CmdResult<ConfluenceTestResult>>('test_confluence_connection', {
-      payload: {
-        baseUrl: confluenceForm.baseUrl.trim(),
-        username: confluenceForm.username.trim(),
-        apiToken: tokenInput.value.trim() || undefined,
-        spaceKey: confluenceForm.spaceKey.trim(),
-        ignoreSsl: confluenceForm.ignoreSsl,
-      },
-    })
-
-    if (testRes.ok && testRes.data) {
-      connectionSucceeded.value = testRes.data.success
-      connectionMessage.value = testRes.data.message
-      if (!testRes.data.success) {
-        confluenceErrorMessage.value = testRes.data.message
+    if (res.ok && res.data) {
+      connectionSucceeded.value = res.data.success
+      patCurrentUserDisplayName.value = res.data.currentUserDisplayName || ''
+      connectionMessage.value = res.data.success
+        ? `已连接${res.data.currentUserDisplayName ? `，当前用户：${res.data.currentUserDisplayName}` : ''}`
+        : res.data.message
+      if (!res.data.success) {
+        confluenceErrorMessage.value = res.data.message
+        if (res.data.message.includes('API Token')) {
+          // 独立核对持久化状态，区分"确实从未保存过令牌"与"已保存但本次读取失败"两种情况，
+          // 避免用户误以为"已保存令牌"提示等同于令牌一定可被读取到。
+          const statusRes = await invoke<CmdResult<ConfluenceTokenStatus>>(
+            'get_confluence_token_status'
+          )
+          hasStoredToken.value = statusRes.ok ? !!statusRes.data?.hasToken : false
+          confluenceErrorMessage.value = hasStoredToken.value
+            ? `${res.data.message}（系统检测到已保存令牌，但本次读取失败，请点击上方"编辑连接信息"重新输入并保存 PAT）`
+            : `${res.data.message}（系统未检测到任何已保存令牌，请点击上方"编辑连接信息"输入并保存 PAT）`
+        }
       }
     } else {
       connectionSucceeded.value = false
-      connectionMessage.value = `连接测试失败：${testRes.error || '未知错误'}`
+      connectionMessage.value = `连接测试失败：${res.error || '未知错误'}`
       confluenceErrorMessage.value = connectionMessage.value
     }
   } catch (err: any) {
     connectionSucceeded.value = false
-    connectionMessage.value = `连接测试异常：${err?.message || '系统错误'}`
+    connectionMessage.value = `连接测试异常：${err?.message || '未知错误'}`
     confluenceErrorMessage.value = connectionMessage.value
   } finally {
     isTestingConnection.value = false
   }
 }
 
-function touchConfluenceValidators() {
-  baseUrlTouched.value = true
-  usernameTouched.value = true
-  spaceKeyTouched.value = true
-  parentPageIdTouched.value = true
+async function onCheckMd2cf() {
+  md2cfMessage.value = ''
+  md2cfInstalled.value = null
+  try {
+    const res = await invoke<CmdResult<Md2cfCheckResult>>('check_md2cf_installed')
+    if (res.ok && res.data) {
+      md2cfInstalled.value = res.data.installed
+      md2cfMessage.value = res.data.message
+    } else {
+      md2cfInstalled.value = false
+      md2cfMessage.value = `md2cf 检测失败：${res.error || '未知错误'}`
+    }
+  } catch (err: any) {
+    md2cfInstalled.value = false
+    md2cfMessage.value = `md2cf 检测异常：${err?.message || '未知错误'}`
+  }
 }
 
 function resetConfluenceFeedback() {
@@ -484,8 +531,31 @@ function resetConfluenceFeedback() {
   confluenceSuccessMessage.value = ''
   connectionMessage.value = ''
   connectionSucceeded.value = null
+  patCurrentUserDisplayName.value = ''
   md2cfMessage.value = ''
   md2cfInstalled.value = null
+}
+
+async function onClearAllConfluenceSettings() {
+  if (!window.confirm('确定要删除所有已保存的 Confluence 配置与 API Token 吗？此操作不可撤销。')) {
+    return
+  }
+  resetConfluenceFeedback()
+  isClearingAllConfluenceSettings.value = true
+  try {
+    const res = await invoke<CmdResult<null>>('clear_confluence_settings')
+    if (res.ok) {
+      hasStoredToken.value = false
+      resetConfluenceMessages()
+      confluenceSuccessMessage.value = '已删除所有已保存的 Confluence 配置与 API Token'
+    } else {
+      confluenceErrorMessage.value = `删除失败：${res.error || '未知错误'}`
+    }
+  } catch (err: any) {
+    confluenceErrorMessage.value = `删除异常：${err?.message || '系统错误'}`
+  } finally {
+    isClearingAllConfluenceSettings.value = false
+  }
 }
 </script>
 
@@ -565,121 +635,142 @@ function resetConfluenceFeedback() {
         aria-labelledby="tab-confluence"
         tabindex="0"
       >
-        <p class="modal-description">配置 Confluence REST API 发布参数，API Token 将安全保存在系统凭据库中。</p>
-
-        <div
-          v-if="isCredentialsServerChanged"
-          class="notice-banner"
-          role="status"
-          data-testid="credentials-notice-banner"
-        >
-          已修改 Base URL 或用户名，保存后将继续复用已保存的 Token；若更换了服务器或账号，请重新输入 Token。
-        </div>
-
-        <div class="field-group">
-          <label class="field-label" for="confluence-base-url">Confluence Server URL</label>
-          <input
-            id="confluence-base-url"
-            v-model="confluenceForm.baseUrl"
-            type="url"
-            class="text-input"
-            placeholder="https://your-domain.atlassian.net/wiki"
-            @blur="baseUrlTouched = true"
-          />
-          <p v-if="baseUrlError" class="error-text" role="alert">{{ baseUrlError }}</p>
-        </div>
-
-        <div class="field-group">
-          <label class="field-label" for="confluence-username">用户名 / 邮箱</label>
-          <input
-            id="confluence-username"
-            v-model="confluenceForm.username"
-            type="text"
-            class="text-input"
-            placeholder="name@example.com"
-            @blur="usernameTouched = true"
-          />
-          <p v-if="usernameError" class="error-text" role="alert">{{ usernameError }}</p>
-        </div>
-
-        <div class="field-group">
-          <label class="field-label" for="confluence-api-token">API Token / Personal Access Token</label>
-          <input
-            id="confluence-api-token"
-            v-model="tokenInput"
-            type="password"
-            class="text-input"
-            :placeholder="tokenPlaceholder"
-          />
-          <div class="token-row">
-            <span v-if="hasStoredToken" class="token-hint">当前已保存安全令牌</span>
-            <button
-              v-if="hasStoredToken"
-              type="button"
-              class="btn btn-secondary token-clear-btn"
-              :disabled="confluenceBusy"
-              @click="onClearToken"
-            >
-              {{ isClearingToken ? '清除中...' : '清除已保存令牌' }}
-            </button>
-          </div>
-        </div>
-
-        <div class="field-group">
-          <label class="field-label" for="confluence-space-key">Space Key</label>
-          <input
-            id="confluence-space-key"
-            v-model="confluenceForm.spaceKey"
-            type="text"
-            class="text-input"
-            placeholder="MY_SPACE"
-            @blur="spaceKeyTouched = true"
-          />
-          <p v-if="spaceKeyError" class="error-text" role="alert">{{ spaceKeyError }}</p>
-        </div>
-
-        <div class="field-group">
-          <label class="field-label" for="confluence-parent-page-id">Parent Page ID</label>
-          <input
-            id="confluence-parent-page-id"
-            v-model="confluenceForm.parentPageId"
-            type="text"
-            class="text-input"
-            placeholder="123456"
-            @blur="parentPageIdTouched = true"
-          />
-          <p v-if="parentPageIdError" class="error-text" role="alert">{{ parentPageIdError }}</p>
-        </div>
-
-        <label class="checkbox-row">
-          <input v-model="confluenceForm.ignoreSsl" type="checkbox" />
-          <span>忽略 SSL 校验（允许自签名证书）</span>
-        </label>
-
-        <div class="test-panel">
-          <button
-            type="button"
-            class="btn btn-secondary"
-            :disabled="confluenceBusy"
-            @click="onTestConnection"
-          >
-            {{ isTestingConnection ? '测试中...' : '测试连接' }}
-          </button>
-          <p class="hint-text">连接测试始终使用 REST API 直连，不依赖 md2cf。</p>
-          <p v-if="md2cfMessage" class="status-text" :class="{ success: md2cfInstalled }">
-            {{ md2cfMessage }}
+        <template v-if="confluenceStep === 'connection'">
+          <p class="modal-description">
+            第 1 步：填写 Confluence Base URL 与 API Token / Personal Access Token (PAT)，保存后即可浏览 Space 与页面。
           </p>
-          <p
-            v-if="connectionMessage"
-            class="status-text"
+
+          <div
+            v-if="isCredentialsServerChanged"
+            class="notice-banner"
+            role="status"
+            data-testid="credentials-notice-banner"
+          >
+            已修改 Base URL 或用户名，保存后将继续复用已保存的 Token；若更换了服务器或账号，请重新输入 Token。
+          </div>
+
+          <div class="field-group">
+            <label class="field-label" for="confluence-base-url">Confluence Server URL</label>
+            <input
+              id="confluence-base-url"
+              v-model="confluenceForm.baseUrl"
+              type="url"
+              class="text-input"
+              placeholder="https://your-domain.atlassian.net/wiki"
+              @blur="baseUrlTouched = true"
+            />
+            <p v-if="baseUrlError" class="error-text" role="alert">{{ baseUrlError }}</p>
+          </div>
+
+          <div class="field-group">
+            <label class="field-label" for="confluence-api-token">API Token / Personal Access Token</label>
+            <input
+              id="confluence-api-token"
+              v-model="tokenInput"
+              type="password"
+              class="text-input"
+              :placeholder="tokenPlaceholder"
+            />
+            <div class="token-row">
+              <span v-if="hasStoredToken" class="token-hint">当前已保存安全令牌</span>
+              <button
+                v-if="hasStoredToken"
+                type="button"
+                class="btn btn-secondary token-clear-btn"
+                :disabled="confluenceBusy"
+                @click="onClearToken"
+              >
+                {{ isClearingToken ? '清除中...' : '清除已保存令牌' }}
+              </button>
+            </div>
+          </div>
+
+          <details class="advanced-options" :open="advancedOptionsOpen">
+            <summary @click.prevent="advancedOptionsOpen = !advancedOptionsOpen">高级选项</summary>
+            <div class="advanced-options-body">
+              <div class="field-group">
+                <label class="field-label" for="confluence-username">用户名 / 邮箱（可选）</label>
+                <input
+                  id="confluence-username"
+                  v-model="confluenceForm.username"
+                  type="text"
+                  class="text-input"
+                  placeholder="name@example.com"
+                />
+              </div>
+              <label class="checkbox-row">
+                <input v-model="confluenceForm.ignoreSsl" type="checkbox" />
+                <span>忽略 SSL 校验（允许自签名证书）</span>
+              </label>
+              <div class="danger-zone">
+                <button
+                  type="button"
+                  class="btn btn-danger"
+                  :disabled="isClearingAllConfluenceSettings"
+                  @click="onClearAllConfluenceSettings"
+                >
+                  {{ isClearingAllConfluenceSettings ? '删除中...' : '删除所有已保存的 Confluence 信息' }}
+                </button>
+                <p class="hint-text">用于测试：一键清除已持久化的 Confluence 配置与安全令牌，重新回到第 1 步。</p>
+              </div>
+            </div>
+          </details>
+
+          <details class="diagnostics-panel" :open="diagnosticsOpen">
+            <summary @click.prevent="diagnosticsOpen = !diagnosticsOpen">诊断（可选）</summary>
+            <div class="diagnostics-body">
+              <button type="button" class="btn btn-secondary" @click="onCheckMd2cf">
+                检测 md2cf 安装状态
+              </button>
+              <p class="hint-text">发布始终优先使用 REST API 直连，md2cf 检测仅供参考。</p>
+              <p v-if="md2cfMessage" class="status-text" :class="{ success: md2cfInstalled }">
+                {{ md2cfMessage }}
+              </p>
+            </div>
+          </details>
+
+          <p v-if="confluenceErrorMessage" class="error-text" role="alert">{{ confluenceErrorMessage }}</p>
+          <p v-if="confluenceSuccessMessage" class="success-text">{{ confluenceSuccessMessage }}</p>
+        </template>
+
+        <template v-else>
+          <p class="modal-description">第 2 步：搜索并选择 Space，展开页面树选择父页面（可选）。</p>
+
+          <div
+            class="connection-status"
             :class="{ success: connectionSucceeded, failure: connectionSucceeded === false }"
           >
-            {{ connectionMessage }}
-          </p>
-        </div>
+            <span class="status-text">
+              {{ isTestingConnection ? '连接中...' : connectionMessage || '尚未测试连接' }}
+            </span>
+            <div class="connection-actions">
+              <button
+                type="button"
+                class="btn btn-secondary"
+                :disabled="isTestingConnection"
+                @click="onTestPatConnection"
+              >
+                重新测试连接
+              </button>
+              <button type="button" class="link-button" @click="onEditConnection">
+                编辑连接信息
+              </button>
+            </div>
+          </div>
 
-        <p v-if="confluenceErrorMessage" class="error-text" role="alert">{{ confluenceErrorMessage }}</p>
-        <p v-if="confluenceSuccessMessage" class="success-text">{{ confluenceSuccessMessage }}</p>
+          <ConfluenceSpaceBrowser
+            :base-url="confluenceForm.baseUrl"
+            :username="confluenceForm.username"
+            :ignore-ssl="confluenceForm.ignoreSsl"
+            :token-override="tokenInput"
+            :initial-space-key="confluenceForm.spaceKey"
+            :initial-parent-page-id="confluenceForm.parentPageId"
+            @select="onSpaceBrowserSelect"
+          />
+
+          <p v-if="confluenceErrorMessage" class="error-text" role="alert">{{ confluenceErrorMessage }}</p>
+          <p v-if="confluenceSuccessMessage" class="success-text">{{ confluenceSuccessMessage }}</p>
+        </template>
       </div>
 
       <div class="modal-footer">
@@ -687,6 +778,7 @@ function resetConfluenceFeedback() {
           取消
         </button>
         <button
+          v-if="activeTab === 'general' || confluenceStep === 'connection'"
           type="button"
           class="btn btn-primary confirm-btn"
           :disabled="activeTab === 'general' ? !selectedPath : confluenceBusy"
@@ -697,8 +789,11 @@ function resetConfluenceFeedback() {
               ? '确认'
               : isSavingConfluence
                 ? '保存中...'
-                : '保存 Confluence 设置'
+                : '保存并继续'
           }}
+        </button>
+        <button v-else type="button" class="btn btn-primary confirm-btn" @click="onClose">
+          完成
         </button>
       </div>
     </div>
@@ -865,7 +960,8 @@ function resetConfluenceFeedback() {
   color: var(--color-text-muted);
 }
 
-.test-panel {
+.test-panel,
+.diagnostics-body {
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -873,6 +969,83 @@ function resetConfluenceFeedback() {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm, 4px);
   background: var(--color-background);
+}
+
+.advanced-options,
+.diagnostics-panel {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm, 4px);
+  padding: var(--spacing-sm) var(--spacing-md);
+}
+
+.advanced-options summary,
+.diagnostics-panel summary {
+  cursor: pointer;
+  font-size: var(--font-size-body, 13px);
+  color: var(--color-text-muted);
+}
+
+.advanced-options-body {
+  margin-top: var(--spacing-sm, 8px);
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm, 8px);
+}
+
+.danger-zone {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: var(--spacing-sm, 8px);
+  border-top: 1px dashed var(--color-border);
+}
+
+.btn-danger {
+  background: transparent;
+  border-color: var(--color-error, #f85149);
+  color: var(--color-error, #f85149);
+  align-self: flex-start;
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: var(--color-error, #f85149);
+  color: var(--color-background);
+}
+
+.connection-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--spacing-sm, 8px);
+  padding: var(--spacing-sm, 8px) var(--spacing-md, 12px);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm, 4px);
+  background: var(--color-background);
+}
+
+.connection-status.success {
+  border-color: var(--color-success);
+}
+
+.connection-status.failure {
+  border-color: var(--color-error, #f85149);
+}
+
+.connection-actions {
+  display: flex;
+  gap: var(--spacing-sm, 8px);
+  flex-wrap: wrap;
+}
+
+.link-button {
+  background: transparent;
+  border: none;
+  color: var(--color-accent);
+  cursor: pointer;
+  padding: 0;
+  font-size: 12px;
+  text-decoration: underline;
 }
 
 .status-text.success,

@@ -1,13 +1,11 @@
 use crate::commands::confluence::send_confluence_get;
 use crate::commands::CmdResult;
 use crate::config::{self, AppConfig, ConfluenceConfig};
-use keyring::{Entry, Error as KeyringError};
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
-const CONFLUENCE_TOKEN_SERVICE: &str = "markdown-cat-confluence";
-const CONFLUENCE_TOKEN_ACCOUNT: &str = "confluence-api-token";
 const MAX_CONFLUENCE_TEST_BODY_BYTES: usize = 1_048_576; // 1 MiB
 const MD2CF_CHECK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 const MD2CF_CHECK_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
@@ -140,13 +138,14 @@ pub fn set_confluence_config(
     confluence: ConfluenceConfig,
 ) -> CmdResult<()> {
     let trimmed = normalize_confluence_config(confluence);
-    if trimmed.base_url.is_empty() || trimmed.space_key.is_empty() {
+    if trimmed.base_url.is_empty() {
         return CmdResult::failure(config::ERR_CONFLUENCE_REQUIRED_FIELD_MISSING.to_string());
     }
     if !config::is_valid_confluence_base_url(&trimmed.base_url) {
         return CmdResult::failure(config::ERR_INVALID_CONFLUENCE_BASE_URL.to_string());
     }
-    if !config::is_valid_confluence_space_key(&trimmed.space_key) {
+    // Space Key 现在延后到"浏览 Space/页面树"步骤才选定，第一步（PAT + Base URL）保存时允许为空。
+    if !trimmed.space_key.is_empty() && !config::is_valid_confluence_space_key(&trimmed.space_key) {
         return CmdResult::failure(config::ERR_INVALID_CONFLUENCE_SPACE_KEY.to_string());
     }
     if !trimmed.parent_page_id.is_empty()
@@ -169,55 +168,83 @@ pub fn set_confluence_config(
     }
 }
 
+/// 解析 Confluence API Token 本地文件的完整路径（基于应用可写目录）。
+pub(crate) fn resolve_confluence_token_path(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> {
+    config::resolve_writable_dir(app_handle)
+        .map(|dir| config::confluence_token_file_path(&dir))
+}
+
 /// 检测当前系统是否已保存 Confluence API Token。
 #[tauri::command]
-pub fn get_confluence_token_status() -> CmdResult<ConfluenceTokenStatus> {
-    match read_saved_confluence_token() {
+pub fn get_confluence_token_status(app_handle: tauri::AppHandle) -> CmdResult<ConfluenceTokenStatus> {
+    let token_path = match resolve_confluence_token_path(&app_handle) {
+        Ok(path) => path,
+        Err(error) => return CmdResult::failure(error),
+    };
+    match config::read_confluence_token_file(&token_path) {
         Ok(token) => CmdResult::success(ConfluenceTokenStatus {
-            has_token: !token.trim().is_empty(),
+            has_token: token.map(|t| !t.trim().is_empty()).unwrap_or(false),
         }),
-        Err(TokenReadState::Missing) => {
-            CmdResult::success(ConfluenceTokenStatus { has_token: false })
-        }
-        Err(TokenReadState::Failed(error)) => CmdResult::failure(error),
+        Err(error) => CmdResult::failure(error),
     }
 }
 
-/// 将 Confluence API Token 写入系统安全凭据存储。
+/// 将 Confluence API Token 写入本地文件（应用可写目录下的独立文件，见 `resolve_confluence_token_path`）。
 #[tauri::command]
-pub fn set_confluence_token(api_token: String) -> CmdResult<()> {
+pub fn set_confluence_token(app_handle: tauri::AppHandle, api_token: String) -> CmdResult<()> {
     let token = api_token.trim().to_string();
     if token.is_empty() {
         return CmdResult::failure(config::ERR_CONFLUENCE_TOKEN_MISSING.to_string());
     }
 
-    match token_entry() {
-        Ok(entry) => match entry.set_password(&token) {
-            Ok(_) => CmdResult::ok(),
-            Err(error) => CmdResult::failure(format!(
-                "{}: {}",
-                config::ERR_CONFLUENCE_TOKEN_WRITE_FAILED,
-                error
-            )),
-        },
+    let token_path = match resolve_confluence_token_path(&app_handle) {
+        Ok(path) => path,
+        Err(error) => return CmdResult::failure(error),
+    };
+    match config::write_confluence_token_file(&token_path, &token) {
+        Ok(_) => CmdResult::ok(),
         Err(error) => CmdResult::failure(error),
     }
 }
 
 /// 清除已保存的 Confluence API Token。
 #[tauri::command]
-pub fn clear_confluence_token() -> CmdResult<()> {
-    match token_entry() {
-        Ok(entry) => match entry.delete_credential() {
-            Ok(_) => CmdResult::ok(),
-            Err(error) if is_missing_entry_error(&error) => CmdResult::ok(),
-            Err(error) => CmdResult::failure(format!(
-                "{}: {}",
-                config::ERR_CONFLUENCE_TOKEN_DELETE_FAILED,
-                error
-            )),
-        },
+pub fn clear_confluence_token(app_handle: tauri::AppHandle) -> CmdResult<()> {
+    let token_path = match resolve_confluence_token_path(&app_handle) {
+        Ok(path) => path,
+        Err(error) => return CmdResult::failure(error),
+    };
+    match config::delete_confluence_token_file(&token_path) {
+        Ok(_) => CmdResult::ok(),
         Err(error) => CmdResult::failure(error),
+    }
+}
+
+/// 清除全部已保存的 Confluence 信息（配置字段 + 安全令牌），用于测试/重新配置时一键重置。
+#[tauri::command]
+pub fn clear_confluence_settings(app_handle: tauri::AppHandle) -> CmdResult<()> {
+    let token_path = match resolve_confluence_token_path(&app_handle) {
+        Ok(path) => path,
+        Err(error) => return CmdResult::failure(error),
+    };
+    if let Err(error) = config::delete_confluence_token_file(&token_path) {
+        return CmdResult::failure(error);
+    }
+
+    match config::resolve_writable_dir(&app_handle) {
+        Ok(dir) => {
+            let _config_write_lock = CONFIG_WRITE_LOCK
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let config_path = config::config_file_path(&dir);
+            let mut cfg = config::read_config(&config_path).unwrap_or_default();
+            cfg.confluence = ConfluenceConfig::default();
+            match config::write_config(&config_path, &cfg) {
+                Ok(_) => CmdResult::ok(),
+                Err(e) => CmdResult::failure(e),
+            }
+        }
+        Err(e) => CmdResult::failure(e),
     }
 }
 
@@ -543,7 +570,19 @@ pub fn check_md2cf_installed() -> CmdResult<Md2cfCheckResult> {
 /// 测试 Confluence REST API 连通性与权限。
 #[tauri::command]
 pub async fn test_confluence_connection(
+    app_handle: tauri::AppHandle,
     payload: ConfluenceConnectionPayload,
+) -> CmdResult<ConfluenceTestResult> {
+    let token_path = match resolve_confluence_token_path(&app_handle) {
+        Ok(path) => path,
+        Err(error) => return CmdResult::failure(error),
+    };
+    test_confluence_connection_impl(payload, &token_path).await
+}
+
+async fn test_confluence_connection_impl(
+    payload: ConfluenceConnectionPayload,
+    token_path: &Path,
 ) -> CmdResult<ConfluenceTestResult> {
     let base_url = payload.base_url.trim().trim_end_matches('/').to_string();
     let username = payload.username.trim().to_string();
@@ -573,7 +612,7 @@ pub async fn test_confluence_connection(
         });
     }
 
-    let token = match resolve_connection_token(payload.api_token) {
+    let token = match resolve_connection_token(token_path, payload.api_token) {
         Ok(value) => value,
         Err(error) if error == config::ERR_CONFLUENCE_TOKEN_MISSING => {
             return CmdResult::success(ConfluenceTestResult {
@@ -674,6 +713,846 @@ pub async fn test_confluence_connection(
     }
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfluencePatConnectionPayload {
+    pub base_url: String,
+    #[serde(default)]
+    pub username: Option<String>,
+    pub api_token: Option<String>,
+    pub ignore_ssl: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfluencePatConnectionResult {
+    pub success: bool,
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status_code: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_user_display_name: Option<String>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfluenceSpaceSummary {
+    pub key: String,
+    pub name: String,
+    #[serde(rename = "type")]
+    pub space_type: String,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfluencePageNode {
+    pub id: String,
+    pub title: String,
+}
+
+const MAX_SPACE_SEARCH_PAGES: usize = 3;
+const MAX_SPACE_SEARCH_RESULTS: usize = 50;
+const SPACE_LIST_PAGE_LIMIT: usize = 100;
+
+enum CappedBody {
+    Ok {
+        status: StatusCode,
+        content_type: Option<String>,
+        body: String,
+    },
+    Oversized {
+        status: StatusCode,
+    },
+}
+
+/// 读取响应体，超出 `MAX_CONFLUENCE_TEST_BODY_BYTES` 上限时中止缓冲并排空剩余数据。
+/// 供本文件内 Space/页面树相关命令共用，不影响 `test_confluence_connection` 既有的内联实现。
+async fn read_capped_confluence_body(
+    mut response: reqwest::Response,
+) -> Result<CappedBody, reqwest::Error> {
+    let status = response.status();
+    let content_type = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+
+    let mut buf: Vec<u8> = Vec::new();
+    loop {
+        match response.chunk().await {
+            Ok(Some(chunk)) => {
+                if buf.len() + chunk.len() > MAX_CONFLUENCE_TEST_BODY_BYTES {
+                    loop {
+                        match response.chunk().await {
+                            Ok(Some(_)) => {}
+                            Ok(None) | Err(_) => break,
+                        }
+                    }
+                    return Ok(CappedBody::Oversized { status });
+                }
+                buf.extend_from_slice(&chunk);
+            }
+            Ok(None) => break,
+            Err(error) => return Err(error),
+        }
+    }
+
+    Ok(CappedBody::Ok {
+        status,
+        content_type,
+        body: String::from_utf8_lossy(&buf).to_string(),
+    })
+}
+
+fn confluence_status_error_message(status: StatusCode) -> &'static str {
+    match status {
+        StatusCode::UNAUTHORIZED => {
+            "连接失败：用户名、API Token 或 Personal Access Token (PAT) 不正确。"
+        }
+        StatusCode::FORBIDDEN => "连接失败：当前账号没有访问权限。",
+        StatusCode::NOT_FOUND => "连接失败：未找到对应的资源。",
+        _ => "连接失败：Confluence 返回了异常状态码。",
+    }
+}
+
+fn build_confluence_client(ignore_ssl: bool) -> Result<reqwest::Client, String> {
+    reqwest::Client::builder()
+        .danger_accept_invalid_certs(ignore_ssl)
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|error| format!("{}: {}", config::ERR_CONFLUENCE_CLIENT_BUILD_FAILED, error))
+}
+
+/// 测试 PAT + Base URL 的连通性（不依赖具体 Space），用于两步式向导的第一步。
+#[tauri::command]
+pub async fn test_confluence_pat_connection(
+    app_handle: tauri::AppHandle,
+    payload: ConfluencePatConnectionPayload,
+) -> CmdResult<ConfluencePatConnectionResult> {
+    let token_path = match resolve_confluence_token_path(&app_handle) {
+        Ok(path) => path,
+        Err(error) => return CmdResult::failure(error),
+    };
+    test_confluence_pat_connection_impl(payload, &token_path).await
+}
+
+async fn test_confluence_pat_connection_impl(
+    payload: ConfluencePatConnectionPayload,
+    token_path: &Path,
+) -> CmdResult<ConfluencePatConnectionResult> {
+    let base_url = payload.base_url.trim().trim_end_matches('/').to_string();
+    let username = payload.username.unwrap_or_default().trim().to_string();
+
+    if base_url.is_empty() {
+        return CmdResult::success(ConfluencePatConnectionResult {
+            success: false,
+            message: "请先填写 Confluence Base URL。".to_string(),
+            status_code: None,
+            current_user_display_name: None,
+        });
+    }
+    if !config::is_valid_confluence_base_url(&base_url) {
+        return CmdResult::success(ConfluencePatConnectionResult {
+            success: false,
+            message: "Confluence Base URL 格式无效，必须为 http:// 或 https:// 开头的合法地址。"
+                .to_string(),
+            status_code: None,
+            current_user_display_name: None,
+        });
+    }
+
+    let token = match resolve_connection_token(token_path, payload.api_token) {
+        Ok(value) => value,
+        Err(error) if error == config::ERR_CONFLUENCE_TOKEN_MISSING => {
+            return CmdResult::success(ConfluencePatConnectionResult {
+                success: false,
+                message: "请先输入或保存 API Token / Personal Access Token (PAT)。".to_string(),
+                status_code: None,
+                current_user_display_name: None,
+            })
+        }
+        Err(error) => return CmdResult::failure(error),
+    };
+
+    let client = match build_confluence_client(payload.ignore_ssl) {
+        Ok(client) => client,
+        Err(error) => return CmdResult::failure(error),
+    };
+
+    let url = format!("{}/rest/api/user/current", base_url);
+    let response = send_confluence_get(
+        &client,
+        &url,
+        &username,
+        &token,
+        None,
+        Some(&[(reqwest::header::ACCEPT.as_str(), "application/json")]),
+    )
+    .await;
+
+    match response {
+        Ok(response) => match read_capped_confluence_body(response).await {
+            Ok(CappedBody::Oversized { status }) => {
+                CmdResult::success(ConfluencePatConnectionResult {
+                    success: false,
+                    message: "响应体超出大小限制，已中止读取。".to_string(),
+                    status_code: Some(status.as_u16()),
+                    current_user_display_name: None,
+                })
+            }
+            Ok(CappedBody::Ok {
+                status,
+                content_type,
+                body,
+            }) => {
+                if !status.is_success() {
+                    return CmdResult::success(ConfluencePatConnectionResult {
+                        success: false,
+                        message: format!(
+                            "{}（HTTP {}）",
+                            confluence_status_error_message(status),
+                            status.as_u16()
+                        ),
+                        status_code: Some(status.as_u16()),
+                        current_user_display_name: None,
+                    });
+                }
+
+                let content_type_incompatible = content_type
+                    .as_deref()
+                    .map(|v| !v.to_ascii_lowercase().contains("json"))
+                    .unwrap_or(false);
+                let parsed = serde_json::from_str::<serde_json::Value>(&body).ok();
+                let display_name = parsed
+                    .as_ref()
+                    .and_then(|v| v.as_object())
+                    .and_then(|obj| {
+                        obj.get("displayName")
+                            .or_else(|| obj.get("username"))
+                            .and_then(serde_json::Value::as_str)
+                    })
+                    .map(str::to_string);
+
+                if content_type_incompatible || parsed.is_none() {
+                    return CmdResult::success(ConfluencePatConnectionResult {
+                        success: false,
+                        message: "响应内容不是有效的 Confluence 数据，可能被代理/SSO 拦截。"
+                            .to_string(),
+                        status_code: Some(status.as_u16()),
+                        current_user_display_name: None,
+                    });
+                }
+
+                CmdResult::success(ConfluencePatConnectionResult {
+                    success: true,
+                    message: "连接成功，PAT 有效。".to_string(),
+                    status_code: Some(status.as_u16()),
+                    current_user_display_name: display_name,
+                })
+            }
+            Err(error) => CmdResult::success(ConfluencePatConnectionResult {
+                success: false,
+                message: format_confluence_request_error(&error, payload.ignore_ssl),
+                status_code: None,
+                current_user_display_name: None,
+            }),
+        },
+        Err(error) => CmdResult::success(ConfluencePatConnectionResult {
+            success: false,
+            message: format_confluence_request_error(&error, payload.ignore_ssl),
+            status_code: None,
+            current_user_display_name: None,
+        }),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct ConfluenceSpaceListItem {
+    key: String,
+    #[serde(default)]
+    name: String,
+    #[serde(rename = "type", default)]
+    space_type: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ConfluenceSpaceListResponse {
+    #[serde(default)]
+    results: Vec<ConfluenceSpaceListItem>,
+}
+
+/// 按关键词搜索 Confluence Space：分页拉取全局 Space 列表后在客户端过滤，
+/// 刻意不拼接 CQL 查询字符串，避免注入类风险并兼容 Server/DC 与 Cloud。
+/// 已知局限：全局 Space 总数超过 `MAX_SPACE_SEARCH_PAGES` * `SPACE_LIST_PAGE_LIMIT` 时可能搜不全。
+#[tauri::command]
+pub async fn search_confluence_spaces(
+    app_handle: tauri::AppHandle,
+    base_url: String,
+    username: Option<String>,
+    api_token: Option<String>,
+    ignore_ssl: bool,
+    keyword: String,
+) -> CmdResult<Vec<ConfluenceSpaceSummary>> {
+    let token_path = match resolve_confluence_token_path(&app_handle) {
+        Ok(path) => path,
+        Err(error) => return CmdResult::failure(error),
+    };
+    search_confluence_spaces_impl(&token_path, base_url, username, api_token, ignore_ssl, keyword)
+        .await
+}
+
+async fn search_confluence_spaces_impl(
+    token_path: &Path,
+    base_url: String,
+    username: Option<String>,
+    api_token: Option<String>,
+    ignore_ssl: bool,
+    keyword: String,
+) -> CmdResult<Vec<ConfluenceSpaceSummary>> {
+    let base_url = base_url.trim().trim_end_matches('/').to_string();
+    let auth_username = username.unwrap_or_default().trim().to_string();
+    let keyword = keyword.trim().to_lowercase();
+
+    if !config::is_valid_confluence_base_url(&base_url) {
+        return CmdResult::failure(config::ERR_INVALID_CONFLUENCE_BASE_URL.to_string());
+    }
+    let token = match resolve_connection_token(token_path, api_token) {
+        Ok(value) => value,
+        Err(error) => return CmdResult::failure(error),
+    };
+    let client = match build_confluence_client(ignore_ssl) {
+        Ok(client) => client,
+        Err(error) => return CmdResult::failure(error),
+    };
+
+    let max_pages = if keyword.is_empty() {
+        1
+    } else {
+        MAX_SPACE_SEARCH_PAGES
+    };
+    let mut matches: Vec<ConfluenceSpaceSummary> = Vec::new();
+
+    for page in 0..max_pages {
+        let start = (page * SPACE_LIST_PAGE_LIMIT).to_string();
+        let limit = SPACE_LIST_PAGE_LIMIT.to_string();
+        let url = format!("{}/rest/api/space", base_url);
+        let response = send_confluence_get(
+            &client,
+            &url,
+            &auth_username,
+            &token,
+            Some(&[
+                ("type", "global"),
+                ("start", start.as_str()),
+                ("limit", limit.as_str()),
+            ]),
+            Some(&[(reqwest::header::ACCEPT.as_str(), "application/json")]),
+        )
+        .await;
+
+        let response = match response {
+            Ok(response) => response,
+            Err(error) => {
+                return CmdResult::failure(format!(
+                    "{}: {}",
+                    config::ERR_CONFLUENCE_SPACE_SEARCH_FAILED,
+                    format_confluence_request_error(&error, ignore_ssl)
+                ))
+            }
+        };
+
+        let (status, body) = match read_capped_confluence_body(response).await {
+            Ok(CappedBody::Ok { status, body, .. }) => (status, body),
+            Ok(CappedBody::Oversized { status }) => {
+                return CmdResult::failure(format!(
+                    "{}: 响应体超出大小限制（HTTP {}）。",
+                    config::ERR_CONFLUENCE_SPACE_SEARCH_FAILED,
+                    status.as_u16()
+                ))
+            }
+            Err(error) => {
+                return CmdResult::failure(format!(
+                    "{}: {}",
+                    config::ERR_CONFLUENCE_SPACE_SEARCH_FAILED,
+                    format_confluence_request_error(&error, ignore_ssl)
+                ))
+            }
+        };
+
+        if !status.is_success() {
+            return CmdResult::failure(format!(
+                "{}: {}",
+                config::ERR_CONFLUENCE_SPACE_SEARCH_FAILED,
+                confluence_status_error_message(status)
+            ));
+        }
+
+        let parsed: ConfluenceSpaceListResponse = match serde_json::from_str(&body) {
+            Ok(value) => value,
+            Err(error) => {
+                return CmdResult::failure(format!(
+                    "{}: 解析 Space 列表失败：{}",
+                    config::ERR_CONFLUENCE_SPACE_SEARCH_FAILED,
+                    error
+                ))
+            }
+        };
+
+        let page_len = parsed.results.len();
+        for item in parsed.results {
+            let key_lower = item.key.to_lowercase();
+            let name_lower = item.name.to_lowercase();
+            if keyword.is_empty() || key_lower.contains(&keyword) || name_lower.contains(&keyword)
+            {
+                matches.push(ConfluenceSpaceSummary {
+                    key: item.key,
+                    name: item.name,
+                    space_type: item.space_type,
+                });
+                if matches.len() >= MAX_SPACE_SEARCH_RESULTS {
+                    return CmdResult::success(matches);
+                }
+            }
+        }
+
+        if page_len < SPACE_LIST_PAGE_LIMIT {
+            break;
+        }
+    }
+
+    CmdResult::success(matches)
+}
+
+#[derive(Debug, Deserialize)]
+struct ConfluenceCurrentUser {
+    #[serde(default, rename = "accountId")]
+    account_id: Option<String>,
+    #[serde(default, rename = "userKey")]
+    user_key: Option<String>,
+    #[serde(default)]
+    username: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ConfluenceSpaceDetail {
+    key: String,
+    #[serde(default)]
+    name: String,
+}
+
+/// 解析当前已认证用户的个人空间：依次尝试 accountId（Cloud）/ userKey（Server/DC）/
+/// username 作为个人空间候选 Key（`~{候选值}`），首个可访问的即返回。
+#[tauri::command]
+pub async fn get_confluence_personal_space(
+    app_handle: tauri::AppHandle,
+    base_url: String,
+    username: Option<String>,
+    api_token: Option<String>,
+    ignore_ssl: bool,
+) -> CmdResult<ConfluenceSpaceSummary> {
+    let token_path = match resolve_confluence_token_path(&app_handle) {
+        Ok(path) => path,
+        Err(error) => return CmdResult::failure(error),
+    };
+    get_confluence_personal_space_impl(&token_path, base_url, username, api_token, ignore_ssl)
+        .await
+}
+
+async fn get_confluence_personal_space_impl(
+    token_path: &Path,
+    base_url: String,
+    username: Option<String>,
+    api_token: Option<String>,
+    ignore_ssl: bool,
+) -> CmdResult<ConfluenceSpaceSummary> {
+    let base_url = base_url.trim().trim_end_matches('/').to_string();
+    let auth_username = username.unwrap_or_default().trim().to_string();
+
+    if !config::is_valid_confluence_base_url(&base_url) {
+        return CmdResult::failure(config::ERR_INVALID_CONFLUENCE_BASE_URL.to_string());
+    }
+    let token = match resolve_connection_token(token_path, api_token) {
+        Ok(value) => value,
+        Err(error) => return CmdResult::failure(error),
+    };
+    let client = match build_confluence_client(ignore_ssl) {
+        Ok(client) => client,
+        Err(error) => return CmdResult::failure(error),
+    };
+
+    let current_user_url = format!("{}/rest/api/user/current", base_url);
+    let response = send_confluence_get(
+        &client,
+        &current_user_url,
+        &auth_username,
+        &token,
+        None,
+        Some(&[(reqwest::header::ACCEPT.as_str(), "application/json")]),
+    )
+    .await;
+
+    let body = match response {
+        Ok(response) => match read_capped_confluence_body(response).await {
+            Ok(CappedBody::Ok { status, body, .. }) if status.is_success() => body,
+            Ok(CappedBody::Ok { status, .. }) => {
+                return CmdResult::failure(format!(
+                    "{}: 无法获取当前用户信息（HTTP {}）。",
+                    config::ERR_CONFLUENCE_PERSONAL_SPACE_NOT_FOUND,
+                    status.as_u16()
+                ))
+            }
+            Ok(CappedBody::Oversized { .. }) => {
+                return CmdResult::failure(format!(
+                    "{}: 当前用户信息响应体超出大小限制。",
+                    config::ERR_CONFLUENCE_PERSONAL_SPACE_NOT_FOUND
+                ))
+            }
+            Err(error) => {
+                return CmdResult::failure(format!(
+                    "{}: {}",
+                    config::ERR_CONFLUENCE_PERSONAL_SPACE_NOT_FOUND,
+                    format_confluence_request_error(&error, ignore_ssl)
+                ))
+            }
+        },
+        Err(error) => {
+            return CmdResult::failure(format!(
+                "{}: {}",
+                config::ERR_CONFLUENCE_PERSONAL_SPACE_NOT_FOUND,
+                format_confluence_request_error(&error, ignore_ssl)
+            ))
+        }
+    };
+
+    let current_user: ConfluenceCurrentUser = match serde_json::from_str(&body) {
+        Ok(value) => value,
+        Err(_) => {
+            return CmdResult::failure(config::ERR_CONFLUENCE_PERSONAL_SPACE_NOT_FOUND.to_string())
+        }
+    };
+
+    let mut candidates: Vec<String> = Vec::new();
+    for candidate in [
+        current_user.account_id,
+        current_user.user_key,
+        current_user.username,
+    ]
+    .into_iter()
+    .flatten()
+    {
+        let trimmed = candidate.trim().to_string();
+        if !trimmed.is_empty() && !candidates.contains(&trimmed) {
+            candidates.push(trimmed);
+        }
+    }
+
+    for candidate in candidates {
+        let url = format!("{}/rest/api/space/~{}", base_url, candidate);
+        let response = send_confluence_get(
+            &client,
+            &url,
+            &auth_username,
+            &token,
+            None,
+            Some(&[(reqwest::header::ACCEPT.as_str(), "application/json")]),
+        )
+        .await;
+
+        let response = match response {
+            Ok(response) => response,
+            Err(_) => continue,
+        };
+        let candidate_body = match read_capped_confluence_body(response).await {
+            Ok(CappedBody::Ok { status, body, .. }) if status.is_success() => body,
+            _ => continue,
+        };
+        if let Ok(space) = serde_json::from_str::<ConfluenceSpaceDetail>(&candidate_body) {
+            return CmdResult::success(ConfluenceSpaceSummary {
+                key: space.key,
+                name: space.name,
+                space_type: "personal".to_string(),
+            });
+        }
+    }
+
+    CmdResult::failure(config::ERR_CONFLUENCE_PERSONAL_SPACE_NOT_FOUND.to_string())
+}
+
+#[derive(Debug, Deserialize)]
+struct ConfluenceContentWithAncestors {
+    id: String,
+    #[serde(default)]
+    title: String,
+    #[serde(default)]
+    ancestors: Vec<serde_json::Value>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ConfluenceContentListWithAncestors {
+    #[serde(default)]
+    results: Vec<ConfluenceContentWithAncestors>,
+}
+
+/// 拉取指定 Space 下的根级页面（`ancestors` 为空的页面），作为页面树的首层节点。
+/// 已知局限：Space 内页面数超过分页上限（100）时可能漏掉部分根页面。
+#[tauri::command]
+pub async fn list_confluence_space_root_pages(
+    app_handle: tauri::AppHandle,
+    base_url: String,
+    username: Option<String>,
+    api_token: Option<String>,
+    ignore_ssl: bool,
+    space_key: String,
+) -> CmdResult<Vec<ConfluencePageNode>> {
+    let token_path = match resolve_confluence_token_path(&app_handle) {
+        Ok(path) => path,
+        Err(error) => return CmdResult::failure(error),
+    };
+    list_confluence_space_root_pages_impl(
+        &token_path,
+        base_url,
+        username,
+        api_token,
+        ignore_ssl,
+        space_key,
+    )
+    .await
+}
+
+async fn list_confluence_space_root_pages_impl(
+    token_path: &Path,
+    base_url: String,
+    username: Option<String>,
+    api_token: Option<String>,
+    ignore_ssl: bool,
+    space_key: String,
+) -> CmdResult<Vec<ConfluencePageNode>> {
+    let base_url = base_url.trim().trim_end_matches('/').to_string();
+    let auth_username = username.unwrap_or_default().trim().to_string();
+    let space_key = space_key.trim().to_string();
+
+    if !config::is_valid_confluence_base_url(&base_url) {
+        return CmdResult::failure(config::ERR_INVALID_CONFLUENCE_BASE_URL.to_string());
+    }
+    if !config::is_valid_confluence_space_key(&space_key) {
+        return CmdResult::failure(config::ERR_INVALID_CONFLUENCE_SPACE_KEY.to_string());
+    }
+    let token = match resolve_connection_token(token_path, api_token) {
+        Ok(value) => value,
+        Err(error) => return CmdResult::failure(error),
+    };
+    let client = match build_confluence_client(ignore_ssl) {
+        Ok(client) => client,
+        Err(error) => return CmdResult::failure(error),
+    };
+
+    let url = format!("{}/rest/api/content", base_url);
+    let response = send_confluence_get(
+        &client,
+        &url,
+        &auth_username,
+        &token,
+        Some(&[
+            ("spaceKey", space_key.as_str()),
+            ("type", "page"),
+            ("status", "current"),
+            ("limit", "100"),
+            ("expand", "ancestors"),
+        ]),
+        Some(&[(reqwest::header::ACCEPT.as_str(), "application/json")]),
+    )
+    .await;
+
+    let response = match response {
+        Ok(response) => response,
+        Err(error) => {
+            return CmdResult::failure(format!(
+                "{}: {}",
+                config::ERR_CONFLUENCE_PAGE_TREE_FAILED,
+                format_confluence_request_error(&error, ignore_ssl)
+            ))
+        }
+    };
+
+    let (status, body) = match read_capped_confluence_body(response).await {
+        Ok(CappedBody::Ok { status, body, .. }) => (status, body),
+        Ok(CappedBody::Oversized { status }) => {
+            return CmdResult::failure(format!(
+                "{}: 响应体超出大小限制（HTTP {}）。",
+                config::ERR_CONFLUENCE_PAGE_TREE_FAILED,
+                status.as_u16()
+            ))
+        }
+        Err(error) => {
+            return CmdResult::failure(format!(
+                "{}: {}",
+                config::ERR_CONFLUENCE_PAGE_TREE_FAILED,
+                format_confluence_request_error(&error, ignore_ssl)
+            ))
+        }
+    };
+
+    if !status.is_success() {
+        return CmdResult::failure(format!(
+            "{}: {}",
+            config::ERR_CONFLUENCE_PAGE_TREE_FAILED,
+            confluence_status_error_message(status)
+        ));
+    }
+
+    let parsed: ConfluenceContentListWithAncestors = match serde_json::from_str(&body) {
+        Ok(value) => value,
+        Err(error) => {
+            return CmdResult::failure(format!(
+                "{}: 解析页面列表失败：{}",
+                config::ERR_CONFLUENCE_PAGE_TREE_FAILED,
+                error
+            ))
+        }
+    };
+
+    let root_pages = parsed
+        .results
+        .into_iter()
+        .filter(|item| item.ancestors.is_empty())
+        .map(|item| ConfluencePageNode {
+            id: item.id,
+            title: item.title,
+        })
+        .collect();
+
+    CmdResult::success(root_pages)
+}
+
+#[derive(Debug, Deserialize)]
+struct ConfluenceContentBasic {
+    id: String,
+    #[serde(default)]
+    title: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ConfluenceContentListBasic {
+    #[serde(default)]
+    results: Vec<ConfluenceContentBasic>,
+}
+
+/// 懒加载指定页面的直接子页面，用于展开页面树节点。
+#[tauri::command]
+pub async fn list_confluence_page_children(
+    app_handle: tauri::AppHandle,
+    base_url: String,
+    username: Option<String>,
+    api_token: Option<String>,
+    ignore_ssl: bool,
+    page_id: String,
+) -> CmdResult<Vec<ConfluencePageNode>> {
+    let token_path = match resolve_confluence_token_path(&app_handle) {
+        Ok(path) => path,
+        Err(error) => return CmdResult::failure(error),
+    };
+    list_confluence_page_children_impl(&token_path, base_url, username, api_token, ignore_ssl, page_id)
+        .await
+}
+
+async fn list_confluence_page_children_impl(
+    token_path: &Path,
+    base_url: String,
+    username: Option<String>,
+    api_token: Option<String>,
+    ignore_ssl: bool,
+    page_id: String,
+) -> CmdResult<Vec<ConfluencePageNode>> {
+    let base_url = base_url.trim().trim_end_matches('/').to_string();
+    let auth_username = username.unwrap_or_default().trim().to_string();
+    let page_id = page_id.trim().to_string();
+
+    if !config::is_valid_confluence_base_url(&base_url) {
+        return CmdResult::failure(config::ERR_INVALID_CONFLUENCE_BASE_URL.to_string());
+    }
+    if !config::is_valid_confluence_parent_page_id(&page_id) {
+        return CmdResult::failure(config::ERR_INVALID_CONFLUENCE_PARENT_PAGE_ID.to_string());
+    }
+    let token = match resolve_connection_token(token_path, api_token) {
+        Ok(value) => value,
+        Err(error) => return CmdResult::failure(error),
+    };
+    let client = match build_confluence_client(ignore_ssl) {
+        Ok(client) => client,
+        Err(error) => return CmdResult::failure(error),
+    };
+
+    let url = format!("{}/rest/api/content/{}/child/page", base_url, page_id);
+    let response = send_confluence_get(
+        &client,
+        &url,
+        &auth_username,
+        &token,
+        Some(&[("status", "current"), ("limit", "100")]),
+        Some(&[(reqwest::header::ACCEPT.as_str(), "application/json")]),
+    )
+    .await;
+
+    let response = match response {
+        Ok(response) => response,
+        Err(error) => {
+            return CmdResult::failure(format!(
+                "{}: {}",
+                config::ERR_CONFLUENCE_PAGE_TREE_FAILED,
+                format_confluence_request_error(&error, ignore_ssl)
+            ))
+        }
+    };
+
+    let (status, body) = match read_capped_confluence_body(response).await {
+        Ok(CappedBody::Ok { status, body, .. }) => (status, body),
+        Ok(CappedBody::Oversized { status }) => {
+            return CmdResult::failure(format!(
+                "{}: 响应体超出大小限制（HTTP {}）。",
+                config::ERR_CONFLUENCE_PAGE_TREE_FAILED,
+                status.as_u16()
+            ))
+        }
+        Err(error) => {
+            return CmdResult::failure(format!(
+                "{}: {}",
+                config::ERR_CONFLUENCE_PAGE_TREE_FAILED,
+                format_confluence_request_error(&error, ignore_ssl)
+            ))
+        }
+    };
+
+    if !status.is_success() {
+        return CmdResult::failure(format!(
+            "{}: {}",
+            config::ERR_CONFLUENCE_PAGE_TREE_FAILED,
+            confluence_status_error_message(status)
+        ));
+    }
+
+    let parsed: ConfluenceContentListBasic = match serde_json::from_str(&body) {
+        Ok(value) => value,
+        Err(error) => {
+            return CmdResult::failure(format!(
+                "{}: 解析子页面列表失败：{}",
+                config::ERR_CONFLUENCE_PAGE_TREE_FAILED,
+                error
+            ))
+        }
+    };
+
+    let children = parsed
+        .results
+        .into_iter()
+        .map(|item| ConfluencePageNode {
+            id: item.id,
+            title: item.title,
+        })
+        .collect();
+
+    CmdResult::success(children)
+}
+
 /// 调起保存目录选择指令。
 #[tauri::command]
 pub fn select_save_dir() -> CmdResult<String> {
@@ -690,30 +1569,12 @@ fn normalize_confluence_config(confluence: ConfluenceConfig) -> ConfluenceConfig
     }
 }
 
-fn token_entry() -> Result<Entry, String> {
-    Entry::new(CONFLUENCE_TOKEN_SERVICE, CONFLUENCE_TOKEN_ACCOUNT)
-        .map_err(|error| format!("{}: {}", config::ERR_CONFLUENCE_TOKEN_ENTRY_FAILED, error))
-}
-
-enum TokenReadState {
-    Missing,
-    Failed(String),
-}
-
-fn read_saved_confluence_token() -> Result<String, TokenReadState> {
-    let entry = token_entry().map_err(TokenReadState::Failed)?;
-    match entry.get_password() {
-        Ok(token) => Ok(token),
-        Err(error) if is_missing_entry_error(&error) => Err(TokenReadState::Missing),
-        Err(error) => Err(TokenReadState::Failed(format!(
-            "{}: {}",
-            config::ERR_CONFLUENCE_TOKEN_READ_FAILED,
-            error
-        ))),
-    }
-}
-
-pub(crate) fn resolve_connection_token(api_token: Option<String>) -> Result<String, String> {
+/// 从指定的本地 Token 文件解析可用的 Confluence API Token：优先使用请求内显式提供的 `api_token`
+/// （非空），否则回退读取本地已保存的 Token 文件。
+pub(crate) fn resolve_connection_token(
+    token_path: &Path,
+    api_token: Option<String>,
+) -> Result<String, String> {
     if let Some(api_token) = api_token {
         let token = api_token.trim().to_string();
         if !token.is_empty() {
@@ -721,12 +1582,10 @@ pub(crate) fn resolve_connection_token(api_token: Option<String>) -> Result<Stri
         }
     }
 
-    match read_saved_confluence_token() {
-        Ok(token) if !token.trim().is_empty() => Ok(token),
-        Ok(_) | Err(TokenReadState::Missing) => {
-            Err(config::ERR_CONFLUENCE_TOKEN_MISSING.to_string())
-        }
-        Err(TokenReadState::Failed(error)) => Err(error),
+    match config::read_confluence_token_file(token_path) {
+        Ok(Some(token)) if !token.trim().is_empty() => Ok(token),
+        Ok(_) => Err(config::ERR_CONFLUENCE_TOKEN_MISSING.to_string()),
+        Err(error) => Err(error),
     }
 }
 
@@ -818,11 +1677,6 @@ fn ssl_hint(ignore_ssl: bool) -> &'static str {
     } else {
         "如使用自签名证书，可尝试开启“忽略 SSL 校验”。"
     }
-}
-
-fn is_missing_entry_error(error: &KeyringError) -> bool {
-    matches!(error, KeyringError::NoEntry)
-        || error.to_string().to_ascii_lowercase().contains("no entry")
 }
 
 fn first_non_empty_line(bytes: &[u8]) -> Option<String> {
@@ -1352,22 +2206,28 @@ mod tests {
 #[cfg(test)]
 mod backend_integration_tests {
     use super::{
-        is_missing_entry_error, test_confluence_connection, ConfluenceConnectionPayload,
-        ConfluenceTestResult, MAX_CONFLUENCE_TEST_BODY_BYTES,
+        get_confluence_personal_space_impl, list_confluence_page_children_impl,
+        list_confluence_space_root_pages_impl, search_confluence_spaces_impl,
+        test_confluence_connection_impl, test_confluence_pat_connection_impl,
+        ConfluenceConnectionPayload, ConfluencePatConnectionPayload, ConfluenceTestResult,
+        MAX_CONFLUENCE_TEST_BODY_BYTES,
     };
     use crate::commands::CmdResult;
-    use keyring::Entry;
     use std::io::{Read, Write};
     use std::net::TcpListener;
+    use std::path::PathBuf;
     use std::thread::JoinHandle;
     use std::time::Duration;
 
-    const TEST_KEYRING_SERVICE: &str = "markdown-cat-confluence-test";
-    // Suffixed with the OS process id so two `cargo test` invocations running concurrently
-    // against the same machine's credential store (e.g. overlapping CI jobs) cannot delete
-    // each other's in-flight probe credential.
-    fn test_keyring_account() -> String {
-        format!("integration-test-account-{}", std::process::id())
+    // None of these tests exercise the "no apiToken provided, fall back to the saved token file"
+    // branch (every payload/call below supplies an explicit token), so this path never needs to
+    // exist on disk — it only has to be a valid, well-formed path for `resolve_connection_token`
+    // to attempt (and fail) to read.
+    fn dummy_token_path() -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "markdown-cat-test-token-placeholder-{}.dat",
+            std::process::id()
+        ))
     }
 
     // `std::env::set_var` mutates process-global state, and `NO_PROXY`/`no_proxy` are read by
@@ -1378,33 +2238,6 @@ mod backend_integration_tests {
     // call `allow_local_mock_server_without_proxy`) acquire this lock for their duration to make
     // that mutation effectively single-threaded.
     static ENV_MUTATION_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-    struct CredentialCleanupGuard {
-        service: &'static str,
-        account: String,
-    }
-
-    impl CredentialCleanupGuard {
-        fn new(service: &'static str, account: String) -> Self {
-            Self { service, account }
-        }
-    }
-
-    impl Drop for CredentialCleanupGuard {
-        fn drop(&mut self) {
-            if let Ok(entry) = Entry::new(self.service, &self.account) {
-                let _ = entry.delete_credential();
-            }
-        }
-    }
-
-    fn delete_test_credential_if_present(entry: &Entry) {
-        match entry.delete_credential() {
-            Ok(_) => {}
-            Err(error) if is_missing_entry_error(&error) => {}
-            Err(error) => panic!("failed to clean up test credential: {}", error),
-        }
-    }
 
     /// Holds the global env-mutation lock for the duration of the guard's lifetime and sets the
     /// `NO_PROXY`/`no_proxy` exemption. Verified necessary in sandboxes/CI runners that configure
@@ -1498,6 +2331,53 @@ mod backend_integration_tests {
         (format!("http://{}", addr), handle)
     }
 
+    /// Like `spawn_single_response_server`, but accepts one connection per entry in
+    /// `responses` (in order) and returns each request's raw bytes in the same order —
+    /// needed for tests where a single command issues several sequential HTTP requests
+    /// (e.g. personal-space candidate fallback).
+    fn spawn_sequential_response_server(
+        responses: Vec<Vec<u8>>,
+    ) -> (String, JoinHandle<Vec<Vec<u8>>>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind mock server");
+        listener
+            .set_nonblocking(true)
+            .expect("set mock server non-blocking");
+        let addr = listener.local_addr().expect("read mock server addr");
+        let handle = std::thread::spawn(move || {
+            const ACCEPT_TIMEOUT: Duration = Duration::from_secs(5);
+            let mut requests = Vec::with_capacity(responses.len());
+            for response_bytes in responses {
+                let deadline = std::time::Instant::now() + ACCEPT_TIMEOUT;
+                let mut stream = loop {
+                    match listener.accept() {
+                        Ok((stream, _)) => break stream,
+                        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                            if std::time::Instant::now() >= deadline {
+                                panic!("mock server timed out waiting for a client connection");
+                            }
+                            std::thread::sleep(Duration::from_millis(10));
+                        }
+                        Err(error) => panic!("failed to accept mock connection: {error}"),
+                    }
+                };
+                stream
+                    .set_nonblocking(false)
+                    .expect("clear mock connection non-blocking flag");
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .expect("set mock connection read timeout");
+                let request = read_request_headers(&mut stream);
+                stream
+                    .write_all(&response_bytes)
+                    .expect("write mock response");
+                stream.flush().expect("flush mock response");
+                requests.push(request);
+            }
+            requests
+        });
+        (format!("http://{}", addr), handle)
+    }
+
     fn write_http_chunk(stream: &mut std::net::TcpStream, bytes: &[u8]) {
         write!(stream, "{:X}\r\n", bytes.len()).expect("write mock chunk size");
         stream.write_all(bytes).expect("write mock chunk body");
@@ -1568,36 +2448,6 @@ mod backend_integration_tests {
         result.data.expect("expected confluence test payload")
     }
 
-    #[test]
-    fn keyring_entry_round_trips_without_touching_production_credential() {
-        let account = test_keyring_account();
-        let _cleanup_guard = CredentialCleanupGuard::new(TEST_KEYRING_SERVICE, account.clone());
-        let entry =
-            Entry::new(TEST_KEYRING_SERVICE, &account).expect("create test keyring entry");
-
-        delete_test_credential_if_present(&entry);
-        match entry.get_password() {
-            Err(error) => assert!(is_missing_entry_error(&error)),
-            Ok(value) => panic!("expected missing credential before write, got {value:?}"),
-        }
-
-        entry
-            .set_password("probe-token")
-            .expect("write probe token to keyring");
-        assert_eq!(
-            entry.get_password().expect("read probe token from keyring"),
-            "probe-token"
-        );
-
-        entry
-            .delete_credential()
-            .expect("delete probe token from keyring");
-        match entry.get_password() {
-            Err(error) => assert!(is_missing_entry_error(&error)),
-            Ok(value) => panic!("expected missing credential after delete, got {value:?}"),
-        }
-    }
-
     #[tokio::test]
     async fn test_confluence_connection_succeeds_for_matching_space_response() {
         let _proxy_guard = allow_local_mock_server_without_proxy();
@@ -1605,7 +2455,7 @@ mod backend_integration_tests {
         let (base_url, handle) =
             spawn_single_response_server(http_response("200 OK", "application/json", body));
 
-        let result = unwrap_test_result(test_confluence_connection(payload_for(base_url)).await);
+        let result = unwrap_test_result(test_confluence_connection_impl(payload_for(base_url), &dummy_token_path()).await);
         let request = String::from_utf8(handle.join().expect("join mock server"))
             .expect("mock request should be valid utf-8")
             .to_ascii_lowercase();
@@ -1632,7 +2482,7 @@ mod backend_integration_tests {
 
         let mut payload = payload_for(base_url);
         payload.username = "".to_string();
-        let result = unwrap_test_result(test_confluence_connection(payload).await);
+        let result = unwrap_test_result(test_confluence_connection_impl(payload, &dummy_token_path()).await);
         let request = String::from_utf8(handle.join().expect("join mock server"))
             .expect("mock request should be valid utf-8")
             .to_ascii_lowercase();
@@ -1654,7 +2504,7 @@ mod backend_integration_tests {
             r#"{"message":"unauthorized"}"#,
         ));
 
-        let result = unwrap_test_result(test_confluence_connection(payload_for(base_url)).await);
+        let result = unwrap_test_result(test_confluence_connection_impl(payload_for(base_url), &dummy_token_path()).await);
         let _ = handle.join().expect("join mock server");
 
         assert!(!result.success);
@@ -1671,7 +2521,7 @@ mod backend_integration_tests {
             r#"{"message":"forbidden"}"#,
         ));
 
-        let result = unwrap_test_result(test_confluence_connection(payload_for(base_url)).await);
+        let result = unwrap_test_result(test_confluence_connection_impl(payload_for(base_url), &dummy_token_path()).await);
         let _ = handle.join().expect("join mock server");
 
         assert!(!result.success);
@@ -1688,7 +2538,7 @@ mod backend_integration_tests {
             r#"{"message":"missing"}"#,
         ));
 
-        let result = unwrap_test_result(test_confluence_connection(payload_for(base_url)).await);
+        let result = unwrap_test_result(test_confluence_connection_impl(payload_for(base_url), &dummy_token_path()).await);
         let _ = handle.join().expect("join mock server");
 
         assert!(!result.success);
@@ -1705,7 +2555,7 @@ mod backend_integration_tests {
             "<html><body>SSO login</body></html>",
         ));
 
-        let result = unwrap_test_result(test_confluence_connection(payload_for(base_url)).await);
+        let result = unwrap_test_result(test_confluence_connection_impl(payload_for(base_url), &dummy_token_path()).await);
         let _ = handle.join().expect("join mock server");
 
         assert!(!result.success);
@@ -1722,7 +2572,7 @@ mod backend_integration_tests {
         let (base_url, handle) = spawn_oversized_chunked_response_server(tail_delay);
         let start = std::time::Instant::now();
 
-        let result = unwrap_test_result(test_confluence_connection(payload_for(base_url)).await);
+        let result = unwrap_test_result(test_confluence_connection_impl(payload_for(base_url), &dummy_token_path()).await);
         let elapsed = start.elapsed();
         let _ = handle.join().expect("join mock server");
 
@@ -1734,6 +2584,217 @@ mod backend_integration_tests {
             "oversized response returned before the delayed tail could be drained: {:?} < {:?}",
             elapsed,
             tail_delay
+        );
+    }
+
+    fn pat_payload_for(base_url: String) -> ConfluencePatConnectionPayload {
+        ConfluencePatConnectionPayload {
+            base_url,
+            username: None,
+            api_token: Some("token-123".to_string()),
+            ignore_ssl: false,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_confluence_pat_connection_succeeds_and_reports_display_name() {
+        let _proxy_guard = allow_local_mock_server_without_proxy();
+        let body = r#"{"displayName":"Alice Doe","accountId":"acc-1"}"#;
+        let (base_url, handle) =
+            spawn_single_response_server(http_response("200 OK", "application/json", body));
+
+        let result = test_confluence_pat_connection_impl(pat_payload_for(base_url), &dummy_token_path()).await;
+        let request = String::from_utf8(handle.join().expect("join mock server"))
+            .expect("mock request should be valid utf-8")
+            .to_ascii_lowercase();
+
+        assert!(result.ok, "command unexpectedly failed: {:?}", result.error);
+        let data = result.data.expect("expected pat connection result");
+        assert!(data.success);
+        assert_eq!(data.current_user_display_name, Some("Alice Doe".to_string()));
+        assert!(request.starts_with("get /rest/api/user/current http/1.1\r\n"));
+        assert!(
+            request.contains("authorization: bearer token-123"),
+            "request should use bearer auth when username is empty"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_confluence_pat_connection_reports_failure_on_unauthorized() {
+        let _proxy_guard = allow_local_mock_server_without_proxy();
+        let (base_url, handle) = spawn_single_response_server(http_response(
+            "401 Unauthorized",
+            "application/json",
+            r#"{"message":"Unauthorized"}"#,
+        ));
+
+        let result = test_confluence_pat_connection_impl(pat_payload_for(base_url), &dummy_token_path()).await;
+        let _ = handle.join().expect("join mock server");
+
+        let data = result.data.expect("expected pat connection result");
+        assert!(!data.success);
+        assert_eq!(data.status_code, Some(401));
+    }
+
+    #[tokio::test]
+    async fn search_confluence_spaces_filters_by_keyword_case_insensitively() {
+        let _proxy_guard = allow_local_mock_server_without_proxy();
+        let body = r#"{"results":[
+            {"key":"TEAM","name":"Team Space","type":"global"},
+            {"key":"DOCS","name":"Documentation Hub","type":"global"}
+        ]}"#;
+        let (base_url, handle) =
+            spawn_single_response_server(http_response("200 OK", "application/json", body));
+
+        let result =
+            search_confluence_spaces_impl(&dummy_token_path(), base_url, None, Some("token-123".to_string()), false, "doc".to_string())
+                .await;
+        let _ = handle.join().expect("join mock server");
+
+        assert!(result.ok, "command unexpectedly failed: {:?}", result.error);
+        let spaces = result.data.expect("expected space list");
+        assert_eq!(spaces.len(), 1);
+        assert_eq!(spaces[0].key, "DOCS");
+    }
+
+    #[tokio::test]
+    async fn search_confluence_spaces_returns_first_page_unfiltered_when_keyword_empty() {
+        let _proxy_guard = allow_local_mock_server_without_proxy();
+        let body = r#"{"results":[
+            {"key":"TEAM","name":"Team Space","type":"global"},
+            {"key":"DOCS","name":"Documentation Hub","type":"global"}
+        ]}"#;
+        let (base_url, handle) =
+            spawn_single_response_server(http_response("200 OK", "application/json", body));
+
+        let result =
+            search_confluence_spaces_impl(&dummy_token_path(), base_url, None, Some("token-123".to_string()), false, "".to_string())
+                .await;
+        let _ = handle.join().expect("join mock server");
+
+        assert!(result.ok, "command unexpectedly failed: {:?}", result.error);
+        assert_eq!(result.data.expect("expected space list").len(), 2);
+    }
+
+    #[tokio::test]
+    async fn get_confluence_personal_space_falls_back_through_candidates() {
+        let _proxy_guard = allow_local_mock_server_without_proxy();
+        let current_user_body =
+            r#"{"accountId":"acc-1","userKey":"key-1","username":"jdoe"}"#;
+        let (base_url, handle) = spawn_sequential_response_server(vec![
+            http_response("200 OK", "application/json", current_user_body),
+            http_response("404 Not Found", "application/json", r#"{"message":"nope"}"#),
+            http_response(
+                "200 OK",
+                "application/json",
+                r#"{"key":"~key-1","name":"Jdoe Personal Space"}"#,
+            ),
+        ]);
+
+        let result =
+            get_confluence_personal_space_impl(&dummy_token_path(), base_url, None, Some("token-123".to_string()), false)
+                .await;
+        let requests = handle.join().expect("join mock server");
+
+        assert!(result.ok, "command unexpectedly failed: {:?}", result.error);
+        let space = result.data.expect("expected personal space");
+        assert_eq!(space.key, "~key-1");
+        assert_eq!(space.space_type, "personal");
+
+        let second_request = String::from_utf8_lossy(&requests[1]).to_ascii_lowercase();
+        let third_request = String::from_utf8_lossy(&requests[2]).to_ascii_lowercase();
+        assert!(second_request.starts_with("get /rest/api/space/~acc-1 "));
+        assert!(third_request.starts_with("get /rest/api/space/~key-1 "));
+    }
+
+    #[tokio::test]
+    async fn list_confluence_space_root_pages_filters_pages_with_ancestors() {
+        let _proxy_guard = allow_local_mock_server_without_proxy();
+        let body = r#"{"results":[
+            {"id":"1","title":"Root A","ancestors":[]},
+            {"id":"2","title":"Child B","ancestors":[{"id":"1"}]}
+        ]}"#;
+        let (base_url, handle) =
+            spawn_single_response_server(http_response("200 OK", "application/json", body));
+
+        let result = list_confluence_space_root_pages_impl(
+            &dummy_token_path(),
+            base_url,
+            None,
+            Some("token-123".to_string()),
+            false,
+            "TEAM".to_string(),
+        )
+        .await;
+        let _ = handle.join().expect("join mock server");
+
+        assert!(result.ok, "command unexpectedly failed: {:?}", result.error);
+        let pages = result.data.expect("expected root page list");
+        assert_eq!(pages.len(), 1);
+        assert_eq!(pages[0].id, "1");
+        assert_eq!(pages[0].title, "Root A");
+    }
+
+    #[tokio::test]
+    async fn list_confluence_space_root_pages_rejects_invalid_space_key() {
+        let result = list_confluence_space_root_pages_impl(
+            &dummy_token_path(),
+            "https://example.atlassian.net/wiki".to_string(),
+            None,
+            Some("token-123".to_string()),
+            false,
+            "not a key!".to_string(),
+        )
+        .await;
+
+        assert!(!result.ok);
+        assert_eq!(
+            result.error.as_deref(),
+            Some(crate::config::ERR_INVALID_CONFLUENCE_SPACE_KEY)
+        );
+    }
+
+    #[tokio::test]
+    async fn list_confluence_page_children_returns_mapped_nodes() {
+        let _proxy_guard = allow_local_mock_server_without_proxy();
+        let body = r#"{"results":[
+            {"id":"10","title":"Child One"},
+            {"id":"11","title":"Child Two"}
+        ]}"#;
+        let (base_url, handle) =
+            spawn_single_response_server(http_response("200 OK", "application/json", body));
+
+        let result = list_confluence_page_children_impl(
+            &dummy_token_path(),
+            base_url,
+            None,
+            Some("token-123".to_string()),
+            false,
+            "1".to_string(),
+        )
+        .await;
+        let _ = handle.join().expect("join mock server");
+
+        assert!(result.ok, "command unexpectedly failed: {:?}", result.error);
+        assert_eq!(result.data.expect("expected children list").len(), 2);
+    }
+
+    #[tokio::test]
+    async fn list_confluence_page_children_rejects_invalid_page_id() {
+        let result = list_confluence_page_children_impl(
+            &dummy_token_path(),
+            "https://example.atlassian.net/wiki".to_string(),
+            None,
+            Some("token-123".to_string()),
+            false,
+            "not-numeric".to_string(),
+        )
+        .await;
+
+        assert!(!result.ok);
+        assert_eq!(
+            result.error.as_deref(),
+            Some(crate::config::ERR_INVALID_CONFLUENCE_PARENT_PAGE_ID)
         );
     }
 }

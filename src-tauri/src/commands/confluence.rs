@@ -1,4 +1,4 @@
-use crate::commands::config::resolve_connection_token;
+use crate::commands::config::{resolve_confluence_token_path, resolve_connection_token};
 use crate::commands::CmdResult;
 use crate::config;
 use base64::Engine as _;
@@ -125,7 +125,15 @@ pub async fn publish_confluence(
         "正在初始化 Confluence 发布请求…",
     );
 
-    let token = match resolve_connection_token(payload.api_token) {
+    let token_path = match resolve_confluence_token_path(&app_handle) {
+        Ok(path) => path,
+        Err(error) => {
+            emit_progress(&app_handle, "环境检测", "error", &format!("无法解析 Token 存储路径：{}", error));
+            return CmdResult::failure(error);
+        }
+    };
+
+    let token = match resolve_connection_token(&token_path, payload.api_token) {
         Ok(value) => value,
         Err(error) if error == config::ERR_CONFLUENCE_TOKEN_MISSING => {
             emit_progress(

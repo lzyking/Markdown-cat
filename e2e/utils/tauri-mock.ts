@@ -37,6 +37,7 @@ export function injectTauriMock(page: Page) {
       get_confluence_token_status: () => ({ ok: true, data: { hasToken: false } }),
       set_confluence_token: () => ({ ok: true }),
       clear_confluence_token: () => ({ ok: true }),
+      clear_confluence_settings: () => ({ ok: true }),
       set_confluence_config: () => ({ ok: true }),
       check_md2cf_installed: () => ({
         ok: true,
@@ -53,6 +54,22 @@ export function injectTauriMock(page: Page) {
           message: '请在测试中注册 test_confluence_connection 的自定义 handler。',
         },
       }),
+      test_confluence_pat_connection: () => ({
+        ok: true,
+        data: {
+          success: true,
+          message: '连接成功，PAT 有效。',
+          statusCode: 200,
+          currentUserDisplayName: 'Mock User',
+        },
+      }),
+      search_confluence_spaces: () => ({ ok: true, data: [] }),
+      get_confluence_personal_space: () => ({
+        ok: false,
+        error: '请在测试中注册 get_confluence_personal_space 的自定义 handler。',
+      }),
+      list_confluence_space_root_pages: () => ({ ok: true, data: [] }),
+      list_confluence_page_children: () => ({ ok: true, data: [] }),
       get_blank_document: () => ({
         ok: true,
         data: { filename: 'New_Document.md', content: '' },

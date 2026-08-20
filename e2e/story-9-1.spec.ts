@@ -1,8 +1,9 @@
 import { test, expect } from './fixtures'
 
-// TID: S9.1-E2E 接入 Confluence REST API 配置设置对话框
+// TID: S9.1-E2E 接入 Confluence REST API 配置设置对话框（两步式向导）
 // Priority: P1
-// 覆盖 Story 9.1 的核心 Acceptance Criteria：设置界面渲染、正则校验、测试连接反馈。
+// 覆盖 Confluence 设置面板重构后的核心行为：第一步 PAT+BaseURL 表单、保存后自动进入
+// 第二步 Space 搜索/个人空间/页面树浏览、以及手动兜底输入。
 test.describe('Story 9.1：Confluence REST API 配置设置对话框', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/')
@@ -12,64 +13,98 @@ test.describe('Story 9.1：Confluence REST API 配置设置对话框', () => {
     })
   })
 
-  // AC1: 设置面板增加 Confluence 标签页，提供 5 个输入字段。
-  test('切换到 Confluence 标签页应渲染全部输入字段与 SSL 开关', async ({ page }) => {
+  // AC1: 无配置时，Confluence 标签页应只展示第 1 步（Base URL + Token），高级选项默认折叠。
+  test('切换到 Confluence 标签页应渲染第 1 步表单，高级选项默认折叠', async ({ page }) => {
     await page.locator('.tab-btn', { hasText: 'Confluence' }).click()
 
     await expect(page.locator('#confluence-base-url')).toBeVisible()
-    await expect(page.locator('#confluence-username')).toBeVisible()
     await expect(page.locator('#confluence-api-token')).toBeVisible()
-    await expect(page.locator('#confluence-space-key')).toBeVisible()
-    await expect(page.locator('#confluence-parent-page-id')).toBeVisible()
+    await expect(page.locator('#confluence-username')).not.toBeVisible()
+    await expect(page.locator('.checkbox-row')).not.toBeVisible()
+
+    await page.locator('.advanced-options summary').click()
+    await expect(page.locator('#confluence-username')).toBeVisible()
     await expect(page.locator('.checkbox-row')).toContainText('忽略 SSL 校验')
   })
 
-  // AC5: Space Key 与 Parent Page ID 应在失焦时进行正则校验并给出错误提示。
-  test('非法 Space Key 与 Parent Page ID 失焦后应显示格式错误提示', async ({ page }) => {
+  // AC2: 保存 Base URL + Token 成功后应自动进入第 2 步，并展示 Space 搜索与个人空间入口。
+  test('保存连接信息成功后应自动进入第 2 步并测试连接', async ({ page }) => {
     await page.locator('.tab-btn', { hasText: 'Confluence' }).click()
+    await page.locator('#confluence-base-url').fill('https://example.atlassian.net/wiki')
+    await page.locator('#confluence-api-token').fill('token-123')
 
-    const spaceKeyInput = page.locator('#confluence-space-key')
-    await spaceKeyInput.fill('bad space!')
-    await spaceKeyInput.blur()
-    await expect(page.locator('.field-group', { hasText: 'Space Key' })).toContainText(
-      '仅支持字母、数字和下划线'
-    )
+    await page.locator('.confirm-btn', { hasText: '保存并继续' }).click()
 
-    const parentPageIdInput = page.locator('#confluence-parent-page-id')
-    await parentPageIdInput.fill('abc123')
-    await parentPageIdInput.blur()
-    await expect(page.locator('.field-group', { hasText: 'Parent Page ID' })).toContainText(
-      '仅支持数字'
-    )
+    await expect(page.locator('#confluence-base-url')).toHaveCount(0)
+    await expect(page.locator('.connection-status')).toContainText('已连接')
+    await expect(page.getByPlaceholder('输入 Space 名称或 Key 关键词搜索…')).toBeVisible()
+    await expect(page.locator('button', { hasText: '我的个人空间' })).toBeVisible()
   })
 
-  // AC2 + AC4: 测试连接按钮应调用 md2cf 检测与 REST API 连通性测试，并展示明确反馈。
-  test('点击测试连接应展示 md2cf 检测结果与连接成功反馈', async ({ page }) => {
+  // AC3: 已有持久化配置时打开设置应直接进入第 2 步并自动测试连接。
+  test('已有配置时打开面板应直接进入第 2 步', async ({ page }) => {
+    await page.evaluate(() => {
+      ;(window as any).__TAURI_MOCK_CONFIG__ = {
+        savePath: null,
+        confluence: {
+          baseUrl: 'https://example.atlassian.net/wiki',
+          username: '',
+          spaceKey: 'DOCS',
+          parentPageId: '',
+          ignoreSsl: false,
+        },
+      }
+    })
+    await page.locator('.close-btn').click()
+    await page.evaluate(() => {
+      ;(window as any).__OPEN_SETTINGS__()
+    })
+    await page.locator('.tab-btn', { hasText: 'Confluence' }).click()
+
+    await expect(page.locator('#confluence-base-url')).toHaveCount(0)
+    await expect(page.locator('.selection-hint')).toContainText('Space DOCS')
+    await expect(page.locator('.connection-status')).toContainText('已连接')
+  })
+
+  // AC4: 第 2 步搜索/树接口不可用时，仍可通过折叠的手动输入兜底保存 Space Key / Parent Page ID。
+  test('手动兜底输入非法 Space Key 应展示格式错误提示，合法输入可保存', async ({ page }) => {
+    await page.locator('.tab-btn', { hasText: 'Confluence' }).click()
+    await page.locator('#confluence-base-url').fill('https://example.atlassian.net/wiki')
+    await page.locator('#confluence-api-token').fill('token-123')
+    await page.locator('.confirm-btn', { hasText: '保存并继续' }).click()
+    await expect(page.locator('.connection-status')).toContainText('已连接')
+
+    await page.locator('.manual-fallback summary').click()
+    const manualSpaceKeyInput = page.locator('#confluence-manual-space-key')
+    await manualSpaceKeyInput.fill('bad space!')
+    await manualSpaceKeyInput.blur()
+    await page.locator('button', { hasText: '使用手动输入的 Space / 页面' }).click()
+    await expect(page.locator('.manual-fallback')).toContainText('仅支持字母、数字和下划线')
+
+    await manualSpaceKeyInput.fill('DOCS')
+    await page.locator('#confluence-manual-parent-page-id').fill('123456')
+    await page.locator('button', { hasText: '使用手动输入的 Space / 页面' }).click()
+    await expect(page.locator('.success-text')).toContainText('已保存：Space DOCS')
+  })
+
+  // AC5: 展开诊断面板应可单独检测 md2cf 安装状态，不影响 PAT 连接测试。
+  test('展开诊断面板应可检测 md2cf 安装状态', async ({ page }) => {
     await page.evaluate(() => {
       const w = window as any
       w.__TAURI_MOCK__.__registerHandler('check_md2cf_installed', () => ({
         ok: true,
         data: { installed: true, version: 'md2cf 2.0.0', message: '已检测到 md2cf（md2cf 2.0.0）。' },
       }))
-      w.__TAURI_MOCK__.__registerHandler('test_confluence_connection', () => ({
-        ok: true,
-        data: { success: true, message: '连接成功，已验证空间访问权限。', statusCode: 200 },
-      }))
     })
 
     await page.locator('.tab-btn', { hasText: 'Confluence' }).click()
-    await page.locator('#confluence-base-url').fill('https://example.atlassian.net/wiki')
-    await page.locator('#confluence-username').fill('user@example.com')
-    await page.locator('#confluence-api-token').fill('token-123')
-    await page.locator('#confluence-space-key').fill('DOCS')
-
-    await page.locator('button', { hasText: '测试连接' }).click()
+    await page.locator('.diagnostics-panel summary').click()
+    await page.locator('button', { hasText: '检测 md2cf 安装状态' }).click()
 
     await expect(page.locator('.status-text', { hasText: '已检测到 md2cf' })).toBeVisible()
-    await expect(page.locator('.status-text', { hasText: '连接成功' })).toBeVisible()
   })
 
-  // AC3: API Token 不应以明文形式回显；已保存令牌时输入框应显示占位提示而非明文。
+  // AC6: API Token 不应以明文形式回显；已保存令牌时输入框应显示占位提示而非明文。
   test('已保存 Token 时输入框应显示占位提示而非明文', async ({ page }) => {
     await page.evaluate(() => {
       const w = window as any
@@ -92,3 +127,4 @@ test.describe('Story 9.1：Confluence REST API 配置设置对话框', () => {
     await expect(page.locator('.token-hint')).toContainText('当前已保存安全令牌')
   })
 })
+

@@ -14,15 +14,18 @@ pub const ERR_INVALID_CONFLUENCE_SPACE_KEY: &str = "ERR_INVALID_CONFLUENCE_SPACE
 pub const ERR_INVALID_CONFLUENCE_PARENT_PAGE_ID: &str = "ERR_INVALID_CONFLUENCE_PARENT_PAGE_ID";
 pub const ERR_INVALID_CONFLUENCE_BASE_URL: &str = "ERR_INVALID_CONFLUENCE_BASE_URL";
 pub const ERR_CONFLUENCE_REQUIRED_FIELD_MISSING: &str = "ERR_CONFLUENCE_REQUIRED_FIELD_MISSING";
-pub const ERR_CONFLUENCE_TOKEN_ENTRY_FAILED: &str = "ERR_CONFLUENCE_TOKEN_ENTRY_FAILED";
 pub const ERR_CONFLUENCE_TOKEN_READ_FAILED: &str = "ERR_CONFLUENCE_TOKEN_READ_FAILED";
 pub const ERR_CONFLUENCE_TOKEN_WRITE_FAILED: &str = "ERR_CONFLUENCE_TOKEN_WRITE_FAILED";
 pub const ERR_CONFLUENCE_TOKEN_DELETE_FAILED: &str = "ERR_CONFLUENCE_TOKEN_DELETE_FAILED";
 pub const ERR_CONFLUENCE_TOKEN_MISSING: &str = "ERR_CONFLUENCE_TOKEN_MISSING";
 pub const ERR_CONFLUENCE_REQUEST_FAILED: &str = "ERR_CONFLUENCE_REQUEST_FAILED";
 pub const ERR_CONFLUENCE_CLIENT_BUILD_FAILED: &str = "ERR_CONFLUENCE_CLIENT_BUILD_FAILED";
+pub const ERR_CONFLUENCE_PERSONAL_SPACE_NOT_FOUND: &str = "ERR_CONFLUENCE_PERSONAL_SPACE_NOT_FOUND";
+pub const ERR_CONFLUENCE_SPACE_SEARCH_FAILED: &str = "ERR_CONFLUENCE_SPACE_SEARCH_FAILED";
+pub const ERR_CONFLUENCE_PAGE_TREE_FAILED: &str = "ERR_CONFLUENCE_PAGE_TREE_FAILED";
 
 const CONFIG_FILE_NAME: &str = "config.json";
+const CONFLUENCE_TOKEN_FILE_NAME: &str = "confluence-token.dat";
 const FALLBACK_DIR_NAME: &str = "My Markdown";
 const DEFAULT_THEME_ID: &str = "midnight-slate";
 const APP_IDENTIFIER: &str = "com.markdowncat.dev";
@@ -80,11 +83,22 @@ pub fn is_valid_theme_id(theme_id: &str) -> bool {
     VALID_THEME_IDS.contains(&theme_id)
 }
 
+/// 校验 Space Key 格式：普通 Space 仅允许字母/数字/下划线；
+/// 个人空间 Key 以 `~` 开头（如 Server/DC 的 `~jdoe`、Cloud 的 `~712020:uuid`），
+/// 允许字母、数字、下划线、连字符、冒号与点号。
 pub fn is_valid_confluence_space_key(space_key: &str) -> bool {
-    !space_key.is_empty()
-        && space_key
-            .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+    if space_key.is_empty() {
+        return false;
+    }
+    if let Some(rest) = space_key.strip_prefix('~') {
+        return !rest.is_empty()
+            && rest
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | ':' | '.'));
+    }
+    space_key
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
 }
 
 pub fn is_valid_confluence_parent_page_id(parent_page_id: &str) -> bool {
@@ -243,6 +257,62 @@ pub fn config_file_path(writable_dir: &Path) -> PathBuf {
     writable_dir.join(CONFIG_FILE_NAME)
 }
 
+/// 返回 Confluence API Token 本地文件的完整路径。
+///
+/// Token 明文保存在应用可写目录下的独立文件中（不与 config.json 混同）。这替代了此前基于
+/// 系统安全存储（macOS Keychain / Windows Credential Manager / Linux Secret Service）的方案——
+/// 部分环境下系统安全存储会出现"写入请求返回成功，但随后独立读取确认未找到已保存令牌"的
+/// 权限/授权问题，明文文件读写在这些环境下更可靠。
+/// 已知局限：不再享有系统级加密保护，仅通过 Unix 文件权限（chmod 600）做最基本的本地访问限制；
+/// Windows/其他平台依赖用户主目录/AppData 本身的访问控制。
+pub fn confluence_token_file_path(writable_dir: &Path) -> PathBuf {
+    writable_dir.join(CONFLUENCE_TOKEN_FILE_NAME)
+}
+
+/// 读取本地保存的 Confluence API Token；文件不存在或内容为空返回 `Ok(None)`。
+pub fn read_confluence_token_file(token_path: &Path) -> Result<Option<String>, String> {
+    match fs::read_to_string(token_path) {
+        Ok(content) => {
+            let trimmed = content.trim().to_string();
+            Ok(if trimmed.is_empty() { None } else { Some(trimmed) })
+        }
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(format!("{}: {}", ERR_CONFLUENCE_TOKEN_READ_FAILED, e)),
+    }
+}
+
+/// 将 Confluence API Token 写入本地文件（覆盖写入）。
+/// Unix 平台下尽量将文件权限收紧为仅当前用户可读写（0600）；权限设置失败不视为致命错误。
+pub fn write_confluence_token_file(token_path: &Path, token: &str) -> Result<(), String> {
+    if let Some(parent) = token_path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("{}: {}", ERR_CONFLUENCE_TOKEN_WRITE_FAILED, e))?;
+    }
+    fs::write(token_path, token)
+        .map_err(|e| format!("{}: {}", ERR_CONFLUENCE_TOKEN_WRITE_FAILED, e))?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(metadata) = fs::metadata(token_path) {
+            let mut permissions = metadata.permissions();
+            permissions.set_mode(0o600);
+            let _ = fs::set_permissions(token_path, permissions);
+        }
+    }
+
+    Ok(())
+}
+
+/// 删除本地保存的 Confluence API Token 文件；文件本就不存在也视为成功。
+pub fn delete_confluence_token_file(token_path: &Path) -> Result<(), String> {
+    match fs::remove_file(token_path) {
+        Ok(_) => Ok(()),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(format!("{}: {}", ERR_CONFLUENCE_TOKEN_DELETE_FAILED, e)),
+    }
+}
+
 pub fn panic_log_file_path() -> Option<PathBuf> {
     resolve_app_data_dir().map(|dir| dir.join("logs").join("app.log"))
 }
@@ -285,8 +355,10 @@ fn home_dir() -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::{
-        config_file_path, read_config, write_config, AppConfig, ConfigError,
-        ERR_APP_DIR_NOT_WRITABLE, ERR_CONFIG_READ_FAILED, ERR_CONFIG_WRITE_FAILED,
+        config_file_path, confluence_token_file_path, delete_confluence_token_file,
+        read_config, read_confluence_token_file, write_config, write_confluence_token_file,
+        AppConfig, ConfigError, ERR_APP_DIR_NOT_WRITABLE, ERR_CONFIG_READ_FAILED,
+        ERR_CONFIG_WRITE_FAILED,
     };
     use std::fs;
     use std::io;
@@ -377,5 +449,67 @@ mod tests {
         assert!(!super::is_valid_confluence_base_url(""));
         assert!(!super::is_valid_confluence_base_url("not-a-url"));
         assert!(!super::is_valid_confluence_base_url("ftp://example.com"));
+    }
+
+    #[test]
+    fn confluence_token_file_round_trips_and_reports_missing() {
+        let temp_dir = tempdir().expect("create temp dir");
+        let token_path = confluence_token_file_path(temp_dir.path());
+
+        assert_eq!(
+            read_confluence_token_file(&token_path).expect("read missing token file"),
+            None
+        );
+
+        write_confluence_token_file(&token_path, "token-abc-123").expect("write token file");
+        assert_eq!(
+            read_confluence_token_file(&token_path).expect("read token file"),
+            Some("token-abc-123".to_string())
+        );
+
+        // Overwriting must replace (not append to) the previous value.
+        write_confluence_token_file(&token_path, "token-def-456").expect("overwrite token file");
+        assert_eq!(
+            read_confluence_token_file(&token_path).expect("read overwritten token file"),
+            Some("token-def-456".to_string())
+        );
+
+        delete_confluence_token_file(&token_path).expect("delete token file");
+        assert_eq!(
+            read_confluence_token_file(&token_path).expect("read deleted token file"),
+            None
+        );
+
+        // Deleting an already-absent file is not an error.
+        delete_confluence_token_file(&token_path).expect("delete already-absent token file");
+    }
+
+    #[test]
+    fn confluence_token_file_treats_blank_content_as_missing() {
+        let temp_dir = tempdir().expect("create temp dir");
+        let token_path = confluence_token_file_path(temp_dir.path());
+        fs::write(&token_path, "   \n").expect("write blank token file");
+
+        assert_eq!(
+            read_confluence_token_file(&token_path).expect("read blank token file"),
+            None
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn confluence_token_file_is_restricted_to_owner_on_unix() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp_dir = tempdir().expect("create temp dir");
+        let token_path = confluence_token_file_path(temp_dir.path());
+        write_confluence_token_file(&token_path, "token-abc-123").expect("write token file");
+
+        let mode = fs::metadata(&token_path)
+            .expect("read token file metadata")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o600);
     }
 }

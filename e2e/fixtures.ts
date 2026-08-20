@@ -43,6 +43,7 @@ async function injectMocks(page: Page) {
       get_confluence_token_status: () => ({ ok: true, data: { hasToken: false } }),
       set_confluence_token: () => ({ ok: true }),
       clear_confluence_token: () => ({ ok: true }),
+      clear_confluence_settings: () => ({ ok: true }),
       check_md2cf_installed: () => ({
         ok: true,
         data: {
@@ -59,6 +60,22 @@ async function injectMocks(page: Page) {
           statusCode: null,
         },
       }),
+      test_confluence_pat_connection: () => ({
+        ok: true,
+        data: {
+          success: true,
+          message: '连接成功，PAT 有效。',
+          statusCode: 200,
+          currentUserDisplayName: 'Mock User',
+        },
+      }),
+      search_confluence_spaces: () => ({ ok: true, data: [] }),
+      get_confluence_personal_space: () => ({
+        ok: false,
+        error: '请在测试中按需覆盖 get_confluence_personal_space handler。',
+      }),
+      list_confluence_space_root_pages: () => ({ ok: true, data: [] }),
+      list_confluence_page_children: () => ({ ok: true, data: [] }),
       select_save_dir: () => ({ ok: true, data: '/tmp/custom-markdown-save-dir' }),
       get_blank_document: () => ({
         ok: true,

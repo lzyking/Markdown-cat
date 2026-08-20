@@ -35,6 +35,24 @@ export interface ConfluenceTestResult {
   statusCode?: number | null
 }
 
+export interface ConfluencePatConnectionResult {
+  success: boolean
+  message: string
+  statusCode?: number | null
+  currentUserDisplayName?: string | null
+}
+
+export interface ConfluenceSpaceSummary {
+  key: string
+  name: string
+  type: string
+}
+
+export interface ConfluencePageNode {
+  id: string
+  title: string
+}
+
 export interface ConfluenceImageUpload {
   filename: string
   dataBase64: string
