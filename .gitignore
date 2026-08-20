@@ -74,3 +74,4 @@ $RECYCLE.BIN/
 .env
 .env.*
 
+test-results/
